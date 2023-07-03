@@ -1,0 +1,20 @@
+component: "Monitoring"
+
+reviewers:
+- simonpasquier
+- jan--f
+- raptorsun
+- slashpai
+- sthaha
+- danielmellado
+- marioferh
+
+approvers:
+- bparees
+- simonpasquier
+- jan--f
+- raptorsun
+- slashpai
+- sthaha
+- danielmellado
+- marioferh

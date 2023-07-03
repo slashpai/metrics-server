@@ -1,9 +1,20 @@
-# See the OWNERS docs: https://go.k8s.io/owners
-approvers:
-- s-urbaniak
-- serathius
+component: "Monitoring"
+
 reviewers:
-- dgrisonnet
-- s-urbaniak
-- serathius
-- yangjunmyfm192085
+- simonpasquier
+- jan--f
+- raptorsun
+- slashpai
+- sthaha
+- danielmellado
+- marioferh
+
+approvers:
+- bparees
+- simonpasquier
+- jan--f
+- raptorsun
+- slashpai
+- sthaha
+- danielmellado
+- marioferh

@@ -21,14 +21,27 @@ import (
 	"io/ioutil"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
-	auditv1alpha1 "k8s.io/apiserver/pkg/apis/audit/v1alpha1"
-	auditv1beta1 "k8s.io/apiserver/pkg/apis/audit/v1beta1"
+	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	"k8s.io/apiserver/pkg/apis/audit/validation"
 	"k8s.io/apiserver/pkg/audit"
-
-	"github.com/golang/glog"
+	"k8s.io/klog/v2"
 )
+
+var (
+	apiGroupVersions = []schema.GroupVersion{
+		auditv1.SchemeGroupVersion,
+	}
+	apiGroupVersionSet = map[schema.GroupVersion]bool{}
+)
+
+func init() {
+	for _, gv := range apiGroupVersions {
+		apiGroupVersionSet[gv] = true
+	}
+}
 
 func LoadPolicyFromFile(filePath string) (*auditinternal.Policy, error) {
 	if filePath == "" {
@@ -39,16 +52,50 @@ func LoadPolicyFromFile(filePath string) (*auditinternal.Policy, error) {
 		return nil, fmt.Errorf("failed to read file path %q: %+v", filePath, err)
 	}
 
+	ret, err := LoadPolicyFromBytes(policyDef)
+	if err != nil {
+		return nil, fmt.Errorf("%v: from file %v", err.Error(), filePath)
+	}
+
+	return ret, nil
+}
+
+func LoadPolicyFromBytes(policyDef []byte) (*auditinternal.Policy, error) {
 	policy := &auditinternal.Policy{}
-	decoder := audit.Codecs.UniversalDecoder(auditv1beta1.SchemeGroupVersion, auditv1alpha1.SchemeGroupVersion)
-	if err := runtime.DecodeInto(decoder, policyDef, policy); err != nil {
-		return nil, fmt.Errorf("failed decoding file %q: %v", filePath, err)
+	strictDecoder := serializer.NewCodecFactory(audit.Scheme, serializer.EnableStrict).UniversalDecoder()
+
+	// Try strict decoding first.
+	_, gvk, err := strictDecoder.Decode(policyDef, nil, policy)
+	if err != nil {
+		if !runtime.IsStrictDecodingError(err) {
+			return nil, fmt.Errorf("failed decoding: %w", err)
+		}
+		var (
+			lenientDecoder = audit.Codecs.UniversalDecoder(apiGroupVersions...)
+			lenientErr     error
+		)
+		_, gvk, lenientErr = lenientDecoder.Decode(policyDef, nil, policy)
+		if lenientErr != nil {
+			return nil, fmt.Errorf("failed lenient decoding: %w", lenientErr)
+		}
+		klog.Warningf("Audit policy contains errors, falling back to lenient decoding: %v", err)
+	}
+
+	// Ensure the policy file contained an apiVersion and kind.
+	gv := schema.GroupVersion{Group: gvk.Group, Version: gvk.Version}
+	if !apiGroupVersionSet[gv] {
+		return nil, fmt.Errorf("unknown group version field %v in policy", gvk)
 	}
 
 	if err := validation.ValidatePolicy(policy); err != nil {
 		return nil, err.ToAggregate()
 	}
 
-	glog.V(4).Infof("Loaded %d audit policy rules from file %s\n", len(policy.Rules), filePath)
+	policyCnt := len(policy.Rules)
+	if policyCnt == 0 {
+		return nil, fmt.Errorf("loaded illegal policy with 0 rules")
+	}
+
+	klog.V(4).InfoS("Load audit policy rules success", "policyCnt", policyCnt)
 	return policy, nil
 }

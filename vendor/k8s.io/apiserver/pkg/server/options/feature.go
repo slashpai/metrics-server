@@ -25,8 +25,8 @@ import (
 
 type FeatureOptions struct {
 	EnableProfiling           bool
+	DebugSocketPath           string
 	EnableContentionProfiling bool
-	EnableSwaggerUI           bool
 }
 
 func NewFeatureOptions() *FeatureOptions {
@@ -34,29 +34,41 @@ func NewFeatureOptions() *FeatureOptions {
 
 	return &FeatureOptions{
 		EnableProfiling:           defaults.EnableProfiling,
+		DebugSocketPath:           defaults.DebugSocketPath,
 		EnableContentionProfiling: defaults.EnableContentionProfiling,
-		EnableSwaggerUI:           defaults.EnableSwaggerUI,
 	}
 }
 
 func (o *FeatureOptions) AddFlags(fs *pflag.FlagSet) {
+	if o == nil {
+		return
+	}
+
 	fs.BoolVar(&o.EnableProfiling, "profiling", o.EnableProfiling,
 		"Enable profiling via web interface host:port/debug/pprof/")
 	fs.BoolVar(&o.EnableContentionProfiling, "contention-profiling", o.EnableContentionProfiling,
-		"Enable lock contention profiling, if profiling is enabled")
-	fs.BoolVar(&o.EnableSwaggerUI, "enable-swagger-ui", o.EnableSwaggerUI,
-		"Enables swagger ui on the apiserver at /swagger-ui")
+		"Enable block profiling, if profiling is enabled")
+	fs.StringVar(&o.DebugSocketPath, "debug-socket-path", o.DebugSocketPath,
+		"Use an unprotected (no authn/authz) unix-domain socket for profiling with the given path")
 }
 
 func (o *FeatureOptions) ApplyTo(c *server.Config) error {
+	if o == nil {
+		return nil
+	}
+
 	c.EnableProfiling = o.EnableProfiling
+	c.DebugSocketPath = o.DebugSocketPath
 	c.EnableContentionProfiling = o.EnableContentionProfiling
-	c.EnableSwaggerUI = o.EnableSwaggerUI
 
 	return nil
 }
 
 func (o *FeatureOptions) Validate() []error {
+	if o == nil {
+		return nil
+	}
+
 	errs := []error{}
 	return errs
 }

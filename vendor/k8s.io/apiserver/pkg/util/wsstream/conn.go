@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/glog"
 	"golang.org/x/net/websocket"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 )
@@ -40,11 +40,10 @@ import (
 //
 // Example client session:
 //
-//    CONNECT http://server.com with subprotocol "channel.k8s.io"
-//    WRITE []byte{0, 102, 111, 111, 10} # send "foo\n" on channel 0 (STDIN)
-//    READ  []byte{1, 10}                # receive "\n" on channel 1 (STDOUT)
-//    CLOSE
-//
+//	CONNECT http://server.com with subprotocol "channel.k8s.io"
+//	WRITE []byte{0, 102, 111, 111, 10} # send "foo\n" on channel 0 (STDIN)
+//	READ  []byte{1, 10}                # receive "\n" on channel 1 (STDOUT)
+//	CLOSE
 const ChannelWebSocketProtocol = "channel.k8s.io"
 
 // The Websocket subprotocol "base64.channel.k8s.io" base64 encodes each message with a character
@@ -56,11 +55,10 @@ const ChannelWebSocketProtocol = "channel.k8s.io"
 //
 // Example client session:
 //
-//    CONNECT http://server.com with subprotocol "base64.channel.k8s.io"
-//    WRITE []byte{48, 90, 109, 57, 118, 67, 103, 111, 61} # send "foo\n" (base64: "Zm9vCgo=") on channel '0' (STDIN)
-//    READ  []byte{49, 67, 103, 61, 61} # receive "\n" (base64: "Cg==") on channel '1' (STDOUT)
-//    CLOSE
-//
+//	CONNECT http://server.com with subprotocol "base64.channel.k8s.io"
+//	WRITE []byte{48, 90, 109, 57, 118, 67, 103, 111, 61} # send "foo\n" (base64: "Zm9vCgo=") on channel '0' (STDIN)
+//	READ  []byte{49, 67, 103, 61, 61} # receive "\n" (base64: "Cg==") on channel '1' (STDOUT)
+//	CLOSE
 const Base64ChannelWebSocketProtocol = "base64.channel.k8s.io"
 
 type codecType int
@@ -137,7 +135,7 @@ type ChannelProtocolConfig struct {
 // channels.
 func NewDefaultChannelProtocols(channels []ChannelType) map[string]ChannelProtocolConfig {
 	return map[string]ChannelProtocolConfig{
-		"": {Binary: true, Channels: channels},
+		"":                             {Binary: true, Channels: channels},
 		ChannelWebSocketProtocol:       {Binary: true, Channels: channels},
 		Base64ChannelWebSocketProtocol: {Binary: false, Channels: channels},
 	}
@@ -251,7 +249,7 @@ func (conn *Conn) handle(ws *websocket.Conn) {
 		var data []byte
 		if err := websocket.Message.Receive(ws, &data); err != nil {
 			if err != io.EOF {
-				glog.Errorf("Error on socket receive: %v", err)
+				klog.Errorf("Error on socket receive: %v", err)
 			}
 			break
 		}
@@ -264,11 +262,11 @@ func (conn *Conn) handle(ws *websocket.Conn) {
 		}
 		data = data[1:]
 		if int(channel) >= len(conn.channels) {
-			glog.V(6).Infof("Frame is targeted for a reader %d that is not valid, possible protocol error", channel)
+			klog.V(6).Infof("Frame is targeted for a reader %d that is not valid, possible protocol error", channel)
 			continue
 		}
 		if _, err := conn.channels[channel].DataFromSocket(data); err != nil {
-			glog.Errorf("Unable to write frame to %d: %v\n%s", channel, err, string(data))
+			klog.Errorf("Unable to write frame to %d: %v\n%s", channel, err, string(data))
 			continue
 		}
 	}

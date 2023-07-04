@@ -18,6 +18,7 @@ package clientcmd
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/spf13/pflag"
 
@@ -36,7 +37,7 @@ type ConfigOverrides struct {
 	Timeout         string
 }
 
-// ConfigOverrideFlags holds the flag names to be used for binding command line flags.  Notice that this structure tightly
+// ConfigOverrideFlags holds the flag names to be used for binding command line flags. Notice that this structure tightly
 // corresponds to ConfigOverrides
 type ConfigOverrideFlags struct {
 	AuthOverrideFlags    AuthOverrideFlags
@@ -52,6 +53,7 @@ type AuthOverrideFlags struct {
 	ClientKey         FlagInfo
 	Token             FlagInfo
 	Impersonate       FlagInfo
+	ImpersonateUID    FlagInfo
 	ImpersonateGroups FlagInfo
 	Username          FlagInfo
 	Password          FlagInfo
@@ -70,6 +72,9 @@ type ClusterOverrideFlags struct {
 	APIVersion            FlagInfo
 	CertificateAuthority  FlagInfo
 	InsecureSkipTLSVerify FlagInfo
+	TLSServerName         FlagInfo
+	ProxyURL              FlagInfo
+	DisableCompression    FlagInfo
 }
 
 // FlagInfo contains information about how to register a flag.  This struct is useful if you want to provide a way for an extender to
@@ -97,6 +102,15 @@ func (f FlagInfo) BindStringFlag(flags *pflag.FlagSet, target *string) FlagInfo 
 	// you can't register a flag without a long name
 	if len(f.LongName) > 0 {
 		flags.StringVarP(target, f.LongName, f.ShortName, f.Default, f.Description)
+	}
+	return f
+}
+
+// BindTransformingStringFlag binds the flag based on the provided info.  If LongName == "", nothing is registered
+func (f FlagInfo) BindTransformingStringFlag(flags *pflag.FlagSet, target *string, transformer func(string) (string, error)) FlagInfo {
+	// you can't register a flag without a long name
+	if len(f.LongName) > 0 {
+		flags.VarP(newTransformingStringValue(f.Default, target, transformer), f.LongName, f.ShortName, f.Description)
 	}
 	return f
 }
@@ -130,22 +144,26 @@ func (f FlagInfo) BindBoolFlag(flags *pflag.FlagSet, target *bool) FlagInfo {
 }
 
 const (
-	FlagClusterName      = "cluster"
-	FlagAuthInfoName     = "user"
-	FlagContext          = "context"
-	FlagNamespace        = "namespace"
-	FlagAPIServer        = "server"
-	FlagInsecure         = "insecure-skip-tls-verify"
-	FlagCertFile         = "client-certificate"
-	FlagKeyFile          = "client-key"
-	FlagCAFile           = "certificate-authority"
-	FlagEmbedCerts       = "embed-certs"
-	FlagBearerToken      = "token"
-	FlagImpersonate      = "as"
-	FlagImpersonateGroup = "as-group"
-	FlagUsername         = "username"
-	FlagPassword         = "password"
-	FlagTimeout          = "request-timeout"
+	FlagClusterName        = "cluster"
+	FlagAuthInfoName       = "user"
+	FlagContext            = "context"
+	FlagNamespace          = "namespace"
+	FlagAPIServer          = "server"
+	FlagTLSServerName      = "tls-server-name"
+	FlagInsecure           = "insecure-skip-tls-verify"
+	FlagCertFile           = "client-certificate"
+	FlagKeyFile            = "client-key"
+	FlagCAFile             = "certificate-authority"
+	FlagEmbedCerts         = "embed-certs"
+	FlagBearerToken        = "token"
+	FlagImpersonate        = "as"
+	FlagImpersonateUID     = "as-uid"
+	FlagImpersonateGroup   = "as-group"
+	FlagUsername           = "username"
+	FlagPassword           = "password"
+	FlagTimeout            = "request-timeout"
+	FlagProxyURL           = "proxy-url"
+	FlagDisableCompression = "disable-compression"
 )
 
 // RecommendedConfigOverrideFlags is a convenience method to return recommended flag names prefixed with a string of your choosing
@@ -167,6 +185,7 @@ func RecommendedAuthOverrideFlags(prefix string) AuthOverrideFlags {
 		ClientKey:         FlagInfo{prefix + FlagKeyFile, "", "", "Path to a client key file for TLS"},
 		Token:             FlagInfo{prefix + FlagBearerToken, "", "", "Bearer token for authentication to the API server"},
 		Impersonate:       FlagInfo{prefix + FlagImpersonate, "", "", "Username to impersonate for the operation"},
+		ImpersonateUID:    FlagInfo{prefix + FlagImpersonateUID, "", "", "UID to impersonate for the operation"},
 		ImpersonateGroups: FlagInfo{prefix + FlagImpersonateGroup, "", "", "Group to impersonate for the operation, this flag can be repeated to specify multiple groups."},
 		Username:          FlagInfo{prefix + FlagUsername, "", "", "Username for basic authentication to the API server"},
 		Password:          FlagInfo{prefix + FlagPassword, "", "", "Password for basic authentication to the API server"},
@@ -179,6 +198,9 @@ func RecommendedClusterOverrideFlags(prefix string) ClusterOverrideFlags {
 		APIServer:             FlagInfo{prefix + FlagAPIServer, "", "", "The address and port of the Kubernetes API server"},
 		CertificateAuthority:  FlagInfo{prefix + FlagCAFile, "", "", "Path to a cert file for the certificate authority"},
 		InsecureSkipTLSVerify: FlagInfo{prefix + FlagInsecure, "", "false", "If true, the server's certificate will not be checked for validity. This will make your HTTPS connections insecure"},
+		TLSServerName:         FlagInfo{prefix + FlagTLSServerName, "", "", "If provided, this name will be used to validate server certificate. If this is not provided, hostname used to contact the server is used."},
+		ProxyURL:              FlagInfo{prefix + FlagProxyURL, "", "", "If provided, this URL will be used to connect via proxy"},
+		DisableCompression:    FlagInfo{prefix + FlagDisableCompression, "", "", "If true, opt-out of response compression for all requests to the server"},
 	}
 }
 
@@ -206,6 +228,7 @@ func BindAuthInfoFlags(authInfo *clientcmdapi.AuthInfo, flags *pflag.FlagSet, fl
 	flagNames.ClientKey.BindStringFlag(flags, &authInfo.ClientKey).AddSecretAnnotation(flags)
 	flagNames.Token.BindStringFlag(flags, &authInfo.Token).AddSecretAnnotation(flags)
 	flagNames.Impersonate.BindStringFlag(flags, &authInfo.Impersonate).AddSecretAnnotation(flags)
+	flagNames.ImpersonateUID.BindStringFlag(flags, &authInfo.ImpersonateUID).AddSecretAnnotation(flags)
 	flagNames.ImpersonateGroups.BindStringArrayFlag(flags, &authInfo.ImpersonateGroups).AddSecretAnnotation(flags)
 	flagNames.Username.BindStringFlag(flags, &authInfo.Username).AddSecretAnnotation(flags)
 	flagNames.Password.BindStringFlag(flags, &authInfo.Password).AddSecretAnnotation(flags)
@@ -216,11 +239,25 @@ func BindClusterFlags(clusterInfo *clientcmdapi.Cluster, flags *pflag.FlagSet, f
 	flagNames.APIServer.BindStringFlag(flags, &clusterInfo.Server)
 	flagNames.CertificateAuthority.BindStringFlag(flags, &clusterInfo.CertificateAuthority)
 	flagNames.InsecureSkipTLSVerify.BindBoolFlag(flags, &clusterInfo.InsecureSkipTLSVerify)
+	flagNames.TLSServerName.BindStringFlag(flags, &clusterInfo.TLSServerName)
+	flagNames.ProxyURL.BindStringFlag(flags, &clusterInfo.ProxyURL)
+	flagNames.DisableCompression.BindBoolFlag(flags, &clusterInfo.DisableCompression)
 }
 
 // BindFlags is a convenience method to bind the specified flags to their associated variables
 func BindContextFlags(contextInfo *clientcmdapi.Context, flags *pflag.FlagSet, flagNames ContextOverrideFlags) {
 	flagNames.ClusterName.BindStringFlag(flags, &contextInfo.Cluster)
 	flagNames.AuthInfoName.BindStringFlag(flags, &contextInfo.AuthInfo)
-	flagNames.Namespace.BindStringFlag(flags, &contextInfo.Namespace)
+	flagNames.Namespace.BindTransformingStringFlag(flags, &contextInfo.Namespace, RemoveNamespacesPrefix)
+}
+
+// RemoveNamespacesPrefix is a transformer that strips "ns/", "namespace/" and "namespaces/" prefixes case-insensitively
+func RemoveNamespacesPrefix(value string) (string, error) {
+	for _, prefix := range []string{"namespaces/", "namespace/", "ns/"} {
+		if len(value) > len(prefix) && strings.EqualFold(value[0:len(prefix)], prefix) {
+			value = value[len(prefix):]
+			break
+		}
+	}
+	return value, nil
 }

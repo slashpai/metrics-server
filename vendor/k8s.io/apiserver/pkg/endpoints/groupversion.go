@@ -20,18 +20,28 @@ import (
 	"path"
 	"time"
 
-	"github.com/emicklei/go-restful"
+	restful "github.com/emicklei/go-restful/v3"
 
-	"k8s.io/apimachinery/pkg/api/meta"
+	apidiscoveryv2beta1 "k8s.io/api/apidiscovery/v2beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/managedfields"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/discovery"
-	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/storageversion"
 )
+
+// ConvertabilityChecker indicates what versions a GroupKind is available in.
+type ConvertabilityChecker interface {
+	// VersionsForGroupKind indicates what versions are available to convert a group kind. This determines
+	// what our decoding abilities are.
+	VersionsForGroupKind(gk schema.GroupKind) []schema.GroupVersion
+}
 
 // APIGroupVersion is a helper for exposing rest.Storage objects as http.Handlers via go-restful
 // It handles URLs of the form:
@@ -56,54 +66,72 @@ type APIGroupVersion struct {
 	// version (for when the inevitable meta/v2 group emerges).
 	MetaGroupVersion *schema.GroupVersion
 
-	Mapper meta.RESTMapper
+	// RootScopedKinds are the root scoped kinds for the primary GroupVersion
+	RootScopedKinds sets.String
 
 	// Serializer is used to determine how to convert responses from API methods into bytes to send over
 	// the wire.
 	Serializer     runtime.NegotiatedSerializer
 	ParameterCodec runtime.ParameterCodec
 
-	Typer           runtime.ObjectTyper
-	Creater         runtime.ObjectCreater
-	Convertor       runtime.ObjectConvertor
-	Copier          runtime.ObjectCopier
-	Defaulter       runtime.ObjectDefaulter
-	Linker          runtime.SelfLinker
-	UnsafeConvertor runtime.ObjectConvertor
+	Typer                 runtime.ObjectTyper
+	Creater               runtime.ObjectCreater
+	Convertor             runtime.ObjectConvertor
+	ConvertabilityChecker ConvertabilityChecker
+	Defaulter             runtime.ObjectDefaulter
+	Namer                 runtime.Namer
+	UnsafeConvertor       runtime.ObjectConvertor
+	TypeConverter         managedfields.TypeConverter
 
-	Admit   admission.Interface
-	Context request.RequestContextMapper
+	EquivalentResourceRegistry runtime.EquivalentResourceRegistry
+
+	// Authorizer determines whether a user is allowed to make a certain request. The Handler does a preliminary
+	// authorization check using the request URI but it may be necessary to make additional checks, such as in
+	// the create-on-update case
+	Authorizer authorizer.Authorizer
+
+	Admit admission.Interface
 
 	MinRequestTimeout time.Duration
 
-	// SubresourceGroupVersionKind contains the GroupVersionKind overrides for each subresource that is
-	// accessible from this API group version. The GroupVersionKind is that of the external version of
-	// the subresource. The key of this map should be the path of the subresource. The keys here should
-	// match the keys in the Storage map above for subresources.
-	SubresourceGroupVersionKind map[string]schema.GroupVersionKind
-
-	// EnableAPIResponseCompression indicates whether API Responses should support compression
-	// if the client requests it via Accept-Encoding
-	EnableAPIResponseCompression bool
+	// The limit on the request body size that would be accepted and decoded in a write request.
+	// 0 means no limit.
+	MaxRequestBodyBytes int64
 }
 
 // InstallREST registers the REST handlers (storage, watch, proxy and redirect) into a restful Container.
 // It is expected that the provided path root prefix will serve all operations. Root MUST NOT end
 // in a slash.
-func (g *APIGroupVersion) InstallREST(container *restful.Container) error {
+func (g *APIGroupVersion) InstallREST(container *restful.Container) ([]apidiscoveryv2beta1.APIResourceDiscovery, []*storageversion.ResourceInfo, error) {
 	prefix := path.Join(g.Root, g.GroupVersion.Group, g.GroupVersion.Version)
 	installer := &APIInstaller{
-		group:                        g,
-		prefix:                       prefix,
-		minRequestTimeout:            g.MinRequestTimeout,
-		enableAPIResponseCompression: g.EnableAPIResponseCompression,
+		group:             g,
+		prefix:            prefix,
+		minRequestTimeout: g.MinRequestTimeout,
 	}
 
-	apiResources, ws, registrationErrors := installer.Install()
-	versionDiscoveryHandler := discovery.NewAPIVersionHandler(g.Serializer, g.GroupVersion, staticLister{apiResources}, g.Context)
+	apiResources, resourceInfos, ws, registrationErrors := installer.Install()
+	versionDiscoveryHandler := discovery.NewAPIVersionHandler(g.Serializer, g.GroupVersion, staticLister{apiResources})
 	versionDiscoveryHandler.AddToWebService(ws)
 	container.Add(ws)
-	return utilerrors.NewAggregate(registrationErrors)
+	aggregatedDiscoveryResources, err := ConvertGroupVersionIntoToDiscovery(apiResources)
+	if err != nil {
+		registrationErrors = append(registrationErrors, err)
+	}
+	return aggregatedDiscoveryResources, removeNonPersistedResources(resourceInfos), utilerrors.NewAggregate(registrationErrors)
+}
+
+func removeNonPersistedResources(infos []*storageversion.ResourceInfo) []*storageversion.ResourceInfo {
+	var filtered []*storageversion.ResourceInfo
+	for _, info := range infos {
+		// if EncodingVersion is empty, then the apiserver does not
+		// need to register this resource via the storage version API,
+		// thus we can remove it.
+		if info != nil && len(info.EncodingVersion) > 0 {
+			filtered = append(filtered, info)
+		}
+	}
+	return filtered
 }
 
 // staticLister implements the APIResourceLister interface

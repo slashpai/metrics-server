@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"k8s.io/apiserver/pkg/apis/audit"
+	auditinternal "k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 )
 
@@ -28,45 +29,82 @@ const (
 	DefaultAuditLevel = audit.LevelNone
 )
 
-// Checker exposes methods for checking the policy rules.
-type Checker interface {
-	// Check the audit level for a request with the given authorizer attributes.
-	Level(authorizer.Attributes) audit.Level
+// NewPolicyRuleEvaluator creates a new policy rule evaluator.
+func NewPolicyRuleEvaluator(policy *audit.Policy) auditinternal.PolicyRuleEvaluator {
+	for i, rule := range policy.Rules {
+		policy.Rules[i].OmitStages = unionStages(policy.OmitStages, rule.OmitStages)
+	}
+	return &policyRuleEvaluator{*policy}
 }
 
-// NewChecker creates a new policy checker.
-func NewChecker(policy *audit.Policy) Checker {
-	return &policyChecker{*policy}
+func unionStages(stageLists ...[]audit.Stage) []audit.Stage {
+	m := make(map[audit.Stage]bool)
+	for _, sl := range stageLists {
+		for _, s := range sl {
+			m[s] = true
+		}
+	}
+	result := make([]audit.Stage, 0, len(m))
+	for key := range m {
+		result = append(result, key)
+	}
+	return result
 }
 
-// FakeChecker creates a checker that returns a constant level for all requests (for testing).
-func FakeChecker(level audit.Level) Checker {
-	return &fakeChecker{level}
+// NewFakePolicyRuleEvaluator creates a fake policy rule evaluator that returns
+// a constant level for all requests (for testing).
+func NewFakePolicyRuleEvaluator(level audit.Level, stage []audit.Stage) auditinternal.PolicyRuleEvaluator {
+	return &fakePolicyRuleEvaluator{level, stage}
 }
 
-type policyChecker struct {
+type policyRuleEvaluator struct {
 	audit.Policy
 }
 
-func (p *policyChecker) Level(attrs authorizer.Attributes) audit.Level {
+func (p *policyRuleEvaluator) EvaluatePolicyRule(attrs authorizer.Attributes) auditinternal.RequestAuditConfig {
 	for _, rule := range p.Rules {
 		if ruleMatches(&rule, attrs) {
-			return rule.Level
+			return auditinternal.RequestAuditConfig{
+				Level:             rule.Level,
+				OmitStages:        rule.OmitStages,
+				OmitManagedFields: isOmitManagedFields(&rule, p.OmitManagedFields),
+			}
 		}
 	}
-	return DefaultAuditLevel
+
+	return auditinternal.RequestAuditConfig{
+		Level:             DefaultAuditLevel,
+		OmitStages:        p.OmitStages,
+		OmitManagedFields: p.OmitManagedFields,
+	}
+}
+
+// isOmitManagedFields returns whether to omit managed fields from the request
+// and response bodies from being written to the API audit log.
+// If a user specifies OmitManagedFields inside a policy rule, that overrides
+// the global policy default in Policy.OmitManagedFields.
+func isOmitManagedFields(policyRule *audit.PolicyRule, policyDefault bool) bool {
+	if policyRule.OmitManagedFields == nil {
+		return policyDefault
+	}
+
+	return *policyRule.OmitManagedFields
 }
 
 // Check whether the rule matches the request attrs.
 func ruleMatches(r *audit.PolicyRule, attrs authorizer.Attributes) bool {
+	user := attrs.GetUser()
 	if len(r.Users) > 0 {
-		if !hasString(r.Users, attrs.GetUser().GetName()) {
+		if user == nil || !hasString(r.Users, user.GetName()) {
 			return false
 		}
 	}
 	if len(r.UserGroups) > 0 {
+		if user == nil {
+			return false
+		}
 		matched := false
-		for _, group := range attrs.GetUser().GetGroups() {
+		for _, group := range user.GetGroups() {
 			if hasString(r.UserGroups, group) {
 				matched = true
 				break
@@ -143,14 +181,34 @@ func ruleMatchesResource(r *audit.PolicyRule, attrs authorizer.Attributes) bool 
 
 	apiGroup := attrs.GetAPIGroup()
 	resource := attrs.GetResource()
+	subresource := attrs.GetSubresource()
+	combinedResource := resource
+	// If subresource, the resource in the policy must match "(resource)/(subresource)"
+	if subresource != "" {
+		combinedResource = resource + "/" + subresource
+	}
+
+	name := attrs.GetName()
+
 	for _, gr := range r.Resources {
 		if gr.Group == apiGroup {
 			if len(gr.Resources) == 0 {
 				return true
 			}
 			for _, res := range gr.Resources {
-				if res == resource {
-					return true
+				if len(gr.ResourceNames) == 0 || hasString(gr.ResourceNames, name) {
+					// match "*"
+					if res == combinedResource || res == "*" {
+						return true
+					}
+					// match "*/subresource"
+					if len(subresource) > 0 && strings.HasPrefix(res, "*/") && subresource == strings.TrimPrefix(res, "*/") {
+						return true
+					}
+					// match "resource/*"
+					if strings.HasSuffix(res, "/*") && resource == strings.TrimSuffix(res, "/*") {
+						return true
+					}
 				}
 			}
 		}
@@ -168,10 +226,14 @@ func hasString(slice []string, value string) bool {
 	return false
 }
 
-type fakeChecker struct {
+type fakePolicyRuleEvaluator struct {
 	level audit.Level
+	stage []audit.Stage
 }
 
-func (f *fakeChecker) Level(_ authorizer.Attributes) audit.Level {
-	return f.level
+func (f *fakePolicyRuleEvaluator) EvaluatePolicyRule(_ authorizer.Attributes) auditinternal.RequestAuditConfig {
+	return auditinternal.RequestAuditConfig{
+		Level:      f.level,
+		OmitStages: f.stage,
+	}
 }

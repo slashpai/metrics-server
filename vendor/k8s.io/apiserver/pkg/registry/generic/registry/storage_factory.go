@@ -17,57 +17,79 @@ limitations under the License.
 package registry
 
 import (
+	"fmt"
+	"sync"
+
+	"k8s.io/klog/v2"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/storage"
-	etcdstorage "k8s.io/apiserver/pkg/storage/etcd"
+	cacherstorage "k8s.io/apiserver/pkg/storage/cacher"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
+	"k8s.io/client-go/tools/cache"
 )
 
 // Creates a cacher based given storageConfig.
-func StorageWithCacher(defaultCapacity int) generic.StorageDecorator {
+func StorageWithCacher() generic.StorageDecorator {
 	return func(
-		copier runtime.ObjectCopier,
-		storageConfig *storagebackend.Config,
-		requestedSize *int,
-		objectType runtime.Object,
+		storageConfig *storagebackend.ConfigForResource,
 		resourcePrefix string,
 		keyFunc func(obj runtime.Object) (string, error),
+		newFunc func() runtime.Object,
 		newListFunc func() runtime.Object,
 		getAttrsFunc storage.AttrFunc,
-		triggerFunc storage.TriggerPublisherFunc) (storage.Interface, factory.DestroyFunc) {
+		triggerFuncs storage.IndexerFuncs,
+		indexers *cache.Indexers) (storage.Interface, factory.DestroyFunc, error) {
 
-		capacity := defaultCapacity
-		if requestedSize != nil && *requestedSize == 0 {
-			panic("StorageWithCacher must not be called with zero cache size")
+		s, d, err := generic.NewRawStorage(storageConfig, newFunc)
+		if err != nil {
+			return s, d, err
 		}
-		if requestedSize != nil {
-			capacity = *requestedSize
+		if klogV := klog.V(5); klogV.Enabled() {
+			//nolint:logcheck // It complains about the key/value pairs because it cannot check them.
+			klogV.InfoS("Storage caching is enabled", objectTypeToArgs(newFunc())...)
 		}
 
-		s, d := generic.NewRawStorage(storageConfig)
-		// TODO: we would change this later to make storage always have cacher and hide low level KV layer inside.
-		// Currently it has two layers of same storage interface -- cacher and low level kv.
-		cacherConfig := storage.CacherConfig{
-			CacheCapacity:        capacity,
-			Storage:              s,
-			Versioner:            etcdstorage.APIObjectVersioner{},
-			Copier:               copier,
-			Type:                 objectType,
-			ResourcePrefix:       resourcePrefix,
-			KeyFunc:              keyFunc,
-			NewListFunc:          newListFunc,
-			GetAttrsFunc:         getAttrsFunc,
-			TriggerPublisherFunc: triggerFunc,
-			Codec:                storageConfig.Codec,
+		cacherConfig := cacherstorage.Config{
+			Storage:        s,
+			Versioner:      storage.APIObjectVersioner{},
+			GroupResource:  storageConfig.GroupResource,
+			ResourcePrefix: resourcePrefix,
+			KeyFunc:        keyFunc,
+			NewFunc:        newFunc,
+			NewListFunc:    newListFunc,
+			GetAttrsFunc:   getAttrsFunc,
+			IndexerFuncs:   triggerFuncs,
+			Indexers:       indexers,
+			Codec:          storageConfig.Codec,
 		}
-		cacher := storage.NewCacherFromConfig(cacherConfig)
+		cacher, err := cacherstorage.NewCacherFromConfig(cacherConfig)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		var once sync.Once
 		destroyFunc := func() {
-			cacher.Stop()
-			d()
+			once.Do(func() {
+				cacher.Stop()
+				d()
+			})
 		}
 
-		return cacher, destroyFunc
+		return cacher, destroyFunc, nil
 	}
+}
+
+func objectTypeToArgs(obj runtime.Object) []interface{} {
+	// special-case unstructured objects that tell us their apiVersion/kind
+	if u, isUnstructured := obj.(*unstructured.Unstructured); isUnstructured {
+		if apiVersion, kind := u.GetAPIVersion(), u.GetKind(); len(apiVersion) > 0 && len(kind) > 0 {
+			return []interface{}{"apiVersion", apiVersion, "kind", kind}
+		}
+	}
+
+	// otherwise just return the type
+	return []interface{}{"type", fmt.Sprintf("%T", obj)}
 }

@@ -15,5 +15,5 @@ LABEL io.k8s.display-name="OpenShift Metrics Server" \
       summary="This is a component of OpenShift Container Platform that provides the Kubernetes resource metrics API based on Kubelet metrics" \
       maintainer="OpenShift Monitoring Team <team-monitoring@redhat.com>"
 
-USER 1001
+USER 65534
 ENTRYPOINT ["/usr/bin/metrics-server"]

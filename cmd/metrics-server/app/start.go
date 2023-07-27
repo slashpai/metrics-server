@@ -25,7 +25,6 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 	"k8s.io/component-base/term"
-
 	"sigs.k8s.io/metrics-server/cmd/metrics-server/app/options"
 )
 

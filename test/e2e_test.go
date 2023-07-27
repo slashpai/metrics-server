@@ -554,17 +554,15 @@ func watchPodReadyStatus(client clientset.Interface, podNamespace string, podNam
 func consumeCPU(client clientset.Interface, podName, nodeSelector string) error {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    podName,
-					Command: []string{"./consume-cpu/consume-cpu"},
-					Args:    []string{"--duration-sec=60", "--millicores=50"},
-					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
-					Resources: corev1.ResourceRequirements{
-						Requests: map[corev1.ResourceName]resource.Quantity{
-							corev1.ResourceCPU: mustQuantity("100m"),
-						},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{
+				Name:    podName,
+				Command: []string{"./consume-cpu/consume-cpu"},
+				Args:    []string{"--duration-sec=60", "--millicores=50"},
+				Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
+				Resources: corev1.ResourceRequirements{
+					Requests: map[corev1.ResourceName]resource.Quantity{
+						corev1.ResourceCPU: mustQuantity("100m"),
 					},
 				},
 			},
@@ -582,17 +580,15 @@ func consumeCPU(client clientset.Interface, podName, nodeSelector string) error 
 func consumeMemory(client clientset.Interface, podName, nodeSelector string) error {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    podName,
-					Command: []string{"stress"},
-					Args:    []string{"-m", "1", "--vm-bytes", "50M", "--vm-hang", "0", "-t", "60"},
-					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
-					Resources: corev1.ResourceRequirements{
-						Requests: map[corev1.ResourceName]resource.Quantity{
-							corev1.ResourceMemory: mustQuantity("100Mi"),
-						},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{
+				Name:    podName,
+				Command: []string{"stress"},
+				Args:    []string{"-m", "1", "--vm-bytes", "50M", "--vm-hang", "0", "-t", "60"},
+				Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
+				Resources: corev1.ResourceRequirements{
+					Requests: map[corev1.ResourceName]resource.Quantity{
+						corev1.ResourceMemory: mustQuantity("100Mi"),
 					},
 				},
 			},
@@ -609,18 +605,16 @@ func consumeMemory(client clientset.Interface, podName, nodeSelector string) err
 func consumeWithInitContainer(client clientset.Interface, podName, nodeSelector string) error {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    podName,
-					Command: []string{"./consume-cpu/consume-cpu"},
-					Args:    []string{"--duration-sec=60", "--millicores=50"},
-					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
-					Resources: corev1.ResourceRequirements{
-						Requests: map[corev1.ResourceName]resource.Quantity{
-							corev1.ResourceCPU:    mustQuantity("100m"),
-							corev1.ResourceMemory: mustQuantity("100Mi"),
-						},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{
+				Name:    podName,
+				Command: []string{"./consume-cpu/consume-cpu"},
+				Args:    []string{"--duration-sec=60", "--millicores=50"},
+				Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
+				Resources: corev1.ResourceRequirements{
+					Requests: map[corev1.ResourceName]resource.Quantity{
+						corev1.ResourceCPU:    mustQuantity("100m"),
+						corev1.ResourceMemory: mustQuantity("100Mi"),
 					},
 				},
 			},
@@ -646,30 +640,28 @@ func consumeWithInitContainer(client clientset.Interface, podName, nodeSelector 
 func consumeWithSideCarContainer(client clientset.Interface, podName, nodeSelector string) error {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    podName,
-					Command: []string{"./consume-cpu/consume-cpu"},
-					Args:    []string{"--duration-sec=60", "--millicores=50"},
-					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
-					Resources: corev1.ResourceRequirements{
-						Requests: map[corev1.ResourceName]resource.Quantity{
-							corev1.ResourceCPU:    mustQuantity("100m"),
-							corev1.ResourceMemory: mustQuantity("100Mi"),
-						},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{
+				Name:    podName,
+				Command: []string{"./consume-cpu/consume-cpu"},
+				Args:    []string{"--duration-sec=60", "--millicores=50"},
+				Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
+				Resources: corev1.ResourceRequirements{
+					Requests: map[corev1.ResourceName]resource.Quantity{
+						corev1.ResourceCPU:    mustQuantity("100m"),
+						corev1.ResourceMemory: mustQuantity("100Mi"),
 					},
 				},
-				{
-					Name:    "sidecar-container",
-					Command: []string{"./consume-cpu/consume-cpu"},
-					Args:    []string{"--duration-sec=60", "--millicores=50"},
-					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
-					Resources: corev1.ResourceRequirements{
-						Requests: map[corev1.ResourceName]resource.Quantity{
-							corev1.ResourceCPU:    mustQuantity("100m"),
-							corev1.ResourceMemory: mustQuantity("100Mi"),
-						},
+			},
+			{
+				Name:    "sidecar-container",
+				Command: []string{"./consume-cpu/consume-cpu"},
+				Args:    []string{"--duration-sec=60", "--millicores=50"},
+				Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
+				Resources: corev1.ResourceRequirements{
+					Requests: map[corev1.ResourceName]resource.Quantity{
+						corev1.ResourceCPU:    mustQuantity("100m"),
+						corev1.ResourceMemory: mustQuantity("100Mi"),
 					},
 				},
 			},

@@ -623,7 +623,6 @@ func consumeWithInitContainer(client clientset.Interface, podName, nodeSelector 
 					Command: []string{"./consume-cpu/consume-cpu"},
 					Args:    []string{"--duration-sec=10", "--millicores=50"},
 					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
-					Image:   "registry.k8s.io/e2e-test-images/resource-consumer:1.9",
 				},
 			},
 			Affinity: affinity(nodeSelector),

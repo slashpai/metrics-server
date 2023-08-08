@@ -4,7 +4,6 @@ set -e
 
 : ${NODE_IMAGE:?Need to set NODE_IMAGE to test}
 : ${SKAFFOLD_PROFILE:="test"}
-: ${SKAFFOLD_PROFILE:="test"}
 
 
 KIND_VERSION=0.14.0

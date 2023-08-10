@@ -24,9 +24,8 @@ import (
 )
 
 var (
-	defaultTimeout          = &metav1.Duration{Duration: 3 * time.Second}
-	defaultCacheSize  int32 = 1000
-	defaultAPIVersion       = "v1"
+	defaultTimeout         = &metav1.Duration{Duration: 3 * time.Second}
+	defaultCacheSize int32 = 1000
 )
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {
@@ -39,12 +38,7 @@ func SetDefaults_KMSConfiguration(obj *KMSConfiguration) {
 		obj.Timeout = defaultTimeout
 	}
 
-	if obj.APIVersion == "" {
-		obj.APIVersion = defaultAPIVersion
-	}
-
-	// cacheSize is relevant only for kms v1
-	if obj.CacheSize == nil && obj.APIVersion == "v1" {
+	if obj.CacheSize == nil {
 		obj.CacheSize = &defaultCacheSize
 	}
 }

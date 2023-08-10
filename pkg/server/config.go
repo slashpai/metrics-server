@@ -16,22 +16,22 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
+	"sigs.k8s.io/metrics-server/pkg/scraper/client"
+	"sigs.k8s.io/metrics-server/pkg/scraper/client/resource"
+
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	apimetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/rest"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
+
 	_ "k8s.io/component-base/metrics/prometheus/restclient" // for client-go metrics registration
 
 	"sigs.k8s.io/metrics-server/pkg/api"
 	"sigs.k8s.io/metrics-server/pkg/scraper"
-	"sigs.k8s.io/metrics-server/pkg/scraper/client"
-	"sigs.k8s.io/metrics-server/pkg/scraper/client/resource"
 	"sigs.k8s.io/metrics-server/pkg/storage"
 )
 
@@ -41,12 +41,9 @@ type Config struct {
 	Kubelet          *client.KubeletClientConfig
 	MetricResolution time.Duration
 	ScrapeTimeout    time.Duration
-	NodeSelector     string
 }
 
 func (c Config) Complete() (*server, error) {
-	var labelRequirement []labels.Requirement
-
 	podInformerFactory, err := runningPodMetadataInformer(c.Rest)
 	if err != nil {
 		return nil, err
@@ -61,14 +58,7 @@ func (c Config) Complete() (*server, error) {
 		return nil, fmt.Errorf("unable to construct a client to connect to the kubelets: %v", err)
 	}
 	nodes := informer.Core().V1().Nodes()
-	ns := strings.TrimSpace(c.NodeSelector)
-	if ns != "" {
-		labelRequirement, err = labels.ParseToRequirements(ns)
-		if err != nil {
-			return nil, err
-		}
-	}
-	scrape := scraper.NewScraper(nodes.Lister(), kubeletClient, c.ScrapeTimeout, labelRequirement)
+	scrape := scraper.NewScraper(nodes.Lister(), kubeletClient, c.ScrapeTimeout)
 
 	// Disable default metrics handler and create custom one
 	c.Apiserver.EnableMetrics = false
@@ -76,14 +66,14 @@ func (c Config) Complete() (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	genericServer, err := c.Apiserver.Complete(nil).New("metrics-server", genericapiserver.NewEmptyDelegate())
+	genericServer, err := c.Apiserver.Complete(informer).New("metrics-server", genericapiserver.NewEmptyDelegate())
 	if err != nil {
 		return nil, err
 	}
 	genericServer.Handler.NonGoRestfulMux.HandleFunc("/metrics", metricsHandler)
 
 	store := storage.NewStorage(c.MetricResolution)
-	if err := api.Install(store, podInformer.Lister(), nodes.Lister(), genericServer, labelRequirement); err != nil {
+	if err := api.Install(store, podInformer.Lister(), nodes.Lister(), genericServer); err != nil {
 		return nil, err
 	}
 

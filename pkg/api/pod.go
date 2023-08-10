@@ -47,7 +47,6 @@ var _ rest.Getter = &podMetrics{}
 var _ rest.Lister = &podMetrics{}
 var _ rest.TableConvertor = &podMetrics{}
 var _ rest.Scoper = &podMetrics{}
-var _ rest.SingularNameProvider = &podMetrics{}
 
 func newPodMetrics(groupResource schema.GroupResource, metrics PodMetricsGetter, podLister cache.GenericLister) *podMetrics {
 	return &podMetrics{
@@ -60,10 +59,6 @@ func newPodMetrics(groupResource schema.GroupResource, metrics PodMetricsGetter,
 // New implements rest.Storage interface
 func (m *podMetrics) New() runtime.Object {
 	return &metrics.PodMetrics{}
-}
-
-// Destroy implements rest.Storage interface
-func (m *podMetrics) Destroy() {
 }
 
 // Kind implements rest.KindProvider interface
@@ -144,11 +139,11 @@ func (m *podMetrics) ConvertToTable(ctx context.Context, object runtime.Object, 
 	switch t := object.(type) {
 	case *metrics.PodMetrics:
 		table.ResourceVersion = t.ResourceVersion
-		table.SelfLink = t.SelfLink //nolint:staticcheck // keep deprecated field to be backward compatible
+		table.SelfLink = t.SelfLink
 		addPodMetricsToTable(&table, *t)
 	case *metrics.PodMetricsList:
 		table.ResourceVersion = t.ResourceVersion
-		table.SelfLink = t.SelfLink //nolint:staticcheck // keep deprecated field to be backward compatible
+		table.SelfLink = t.SelfLink
 		table.Continue = t.Continue
 		addPodMetricsToTable(&table, t.Items...)
 	default:
@@ -181,9 +176,4 @@ func (m *podMetrics) getMetrics(pods ...runtime.Object) ([]metrics.PodMetrics, e
 // NamespaceScoped implements rest.Scoper interface
 func (m *podMetrics) NamespaceScoped() bool {
 	return true
-}
-
-// GetSingularName implements rest.SingularNameProvider interface
-func (m *podMetrics) GetSingularName() string {
-	return "pod"
 }

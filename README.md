@@ -39,13 +39,11 @@ For unsupported use cases, check out full monitoring solutions like Prometheus.
 
 Metrics Server has specific requirements for cluster and network configuration. These requirements aren't the default for all cluster
 distributions. Please ensure that your cluster distribution supports these requirements before using Metrics Server:
+- Metrics Server must be [reachable from kube-apiserver] by container IP address (or node IP if hostNetwork is enabled).
 - The kube-apiserver must [enable an aggregation layer].
 - Nodes must have Webhook [authentication and authorization] enabled.
 - Kubelet certificate needs to be signed by cluster Certificate Authority (or disable certificate validation by passing `--kubelet-insecure-tls` to Metrics Server)
 - Container runtime must implement a [container metrics RPCs] (or have [cAdvisor] support)
-- Network should support following communication:
-  - Control plane to Metrics Server. Control plane node needs to reach Metrics Server's pod IP and port 10250 (or node IP and custom port if `hostNetwork` is enabled). Read more about [control plane to node communication](https://kubernetes.io/docs/concepts/architecture/control-plane-node-communication/#control-plane-to-node). 
-  - Metrics Server to Kubelet on all nodes. Metrics server needs to reach node address and Kubelet port. Addresses and ports are configured in Kubelet and published as part of Node object. Addresses in `.status.addresses` and port in `.status.daemonEndpoints.kubeletEndpoint.port` field (default 10250). Metrics Server will pick first node address based on the list provided by `kubelet-preferred-address-types` command line flag (default `InternalIP,ExternalIP,Hostname` in manifests). 
 
 [reachable from kube-apiserver]: https://kubernetes.io/docs/concepts/architecture/master-node-communication/#master-to-cluster
 [enable an aggregation layer]: https://kubernetes.io/docs/tasks/access-kubernetes-api/configure-aggregation-layer/
@@ -67,7 +65,7 @@ Installation instructions for previous releases can be found in [Metrics Server 
 
 Metrics Server | Metrics API group/version | Supported Kubernetes version
 ---------------|---------------------------|-----------------------------
-0.6.x          | `metrics.k8s.io/v1beta1`  | 1.19+
+0.6.x          | `metrics.k8s.io/v1beta1`  | *1.19+
 0.5.x          | `metrics.k8s.io/v1beta1`  | *1.8+
 0.4.x          | `metrics.k8s.io/v1beta1`  | *1.8+
 0.3.x          | `metrics.k8s.io/v1beta1`  | 1.8-1.21
@@ -78,12 +76,6 @@ Metrics Server | Metrics API group/version | Supported Kubernetes version
 
 Metrics Server can be installed in high availability mode directly from a YAML manifest or via the official [Helm chart](https://artifacthub.io/packages/helm/metrics-server/metrics-server) by setting the `replicas` value greater than `1`. To install the latest Metrics Server release in high availability mode from the  _high-availability.yaml_ manifest, run the following command.
 
-On Kubernetes v1.21+:
-```
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/high-availability-1.21+.yaml
-```
-
-On Kubernetes v1.19-1.21:
 ```shell
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/high-availability.yaml
 ```
@@ -99,9 +91,9 @@ The [Helm chart](https://artifacthub.io/packages/helm/metrics-server/metrics-ser
 ## Security context
 
 Metrics Server requires the `CAP_NET_BIND_SERVICE` capability in order to bind to a privileged ports as non-root.
-If you are running Metrics Server in an environment that uses [PSSs](https://kubernetes.io/docs/concepts/security/pod-security-standards/) or other mechanisms to restrict pod capabilities, ensure that Metrics Server is allowed
+If you are running Metrics Server in an environment that uses PSPs or other mechanisms to restrict pod capabilities, ensure that Metrics Server is allowed
 to use this capability.
-This applies even if you use the `--secure-port` flag to change the port that Metrics Server binds to a non-privileged port.
+This applies even if you use the `--secure-port` flag to change the port that Metrics Server binds to to a non-privileged port.
 
 ## Scaling
 
@@ -136,12 +128,11 @@ Most useful flags:
 - `--kubelet-preferred-address-types` - The priority of node address types used when determining an address for connecting to a particular node (default [Hostname,InternalDNS,InternalIP,ExternalDNS,ExternalIP])
 - `--kubelet-insecure-tls` - Do not verify the CA of serving certificates presented by Kubelets. For testing purposes only.
 - `--requestheader-client-ca-file` - Specify a root certificate bundle for verifying client certificates on incoming requests.
-- `--node-selector` -Can complete to scrape the metrics from the Specified nodes based on labels
 
 You can get a full list of Metrics Server configuration flags by running:
 
 ```shell
-docker run --rm registry.k8s.io/metrics-server/metrics-server:v0.6.0 --help
+docker run --rm registry.k8s.io/metrics-server/metrics-server:v0.6.4 --help
 ```
 
 ## Design

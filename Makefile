@@ -14,14 +14,12 @@ BUILD_DATE:=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 ALL_ARCHITECTURES=amd64 arm arm64 ppc64le s390x
 export DOCKER_CLI_EXPERIMENTAL=enabled
 
-# Tools versions
-# --------------
-GOLANGCI_VERSION:=1.53.2
-
 # Computed variables
 # ------------------
+HAS_GOLANGCI:=$(shell which golangci-lint)
 GOPATH:=$(shell go env GOPATH)
 REPO_DIR:=$(shell pwd)
+LDFLAGS=-w $(VERSION_LDFLAGS)
 
 .PHONY: all
 all: metrics-server
@@ -32,8 +30,7 @@ all: metrics-server
 SRC_DEPS=$(shell find pkg cmd -type f -name "*.go") go.mod go.sum
 CHECKSUM=$(shell md5sum $(SRC_DEPS) | md5sum | awk '{print $$1}')
 PKG:=k8s.io/client-go/pkg
-VERSION_LDFLAGS:=-X $(PKG)/version.gitVersion=$(GIT_TAG) -X $(PKG)/version.gitCommit=$(GIT_COMMIT) -X $(PKG)/version.buildDate=$(BUILD_DATE)
-LDFLAGS:=-w $(VERSION_LDFLAGS)
+LDFLAGS:=-X $(PKG)/version.gitVersion=$(GIT_TAG) -X $(PKG)/version.gitCommit=$(GIT_COMMIT) -X $(PKG)/version.buildDate=$(BUILD_DATE)
 
 metrics-server: $(SRC_DEPS)
 	GOARCH=$(ARCH) CGO_ENABLED=0 go build -mod=readonly -ldflags "$(LDFLAGS)" -o metrics-server sigs.k8s.io/metrics-server/cmd/metrics-server
@@ -47,7 +44,7 @@ CONTAINER_ARCH_TARGETS=$(addprefix container-,$(ALL_ARCHITECTURES))
 container:
 	# Pull base image explicitly. Keep in sync with Dockerfile, otherwise
 	# GCB builds will start failing.
-	docker pull golang:1.19.8
+	docker pull golang:1.19.11
 	docker build -t $(REGISTRY)/metrics-server-$(ARCH):$(CHECKSUM) --build-arg ARCH=$(ARCH) --build-arg GIT_TAG=$(GIT_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) .
 
 .PHONY: container-all
@@ -91,20 +88,13 @@ release-tag:
 .PHONY: release-manifests
 release-manifests:
 	mkdir -p _output
-	kubectl kustomize manifests/overlays/release > _output/components.yaml
-	kubectl kustomize manifests/overlays/release-ha > _output/high-availability.yaml
-	kubectl kustomize manifests/overlays/release-ha-1.21+ > _output/high-availability-1.21+.yaml
+	kubectl kustomize manifests/release > _output/components.yaml
+	kubectl kustomize manifests/high-availability > _output/high-availability.yaml
+	kubectl kustomize manifests/high-availability-1.21+ > _output/high-availability-1.21+.yaml
 
-
-# fuzz tests
-# ----------
-
-.PHONY: test-fuzz
-test-fuzz:
-	GO111MODULE=on GOARCH=$(ARCH) go test --test.short -race -fuzz=Fuzz_decodeBatchPrometheusFormat -fuzztime 900s -timeout 10s ./pkg/scraper/client/resource/
-	GO111MODULE=on GOARCH=$(ARCH) go test --test.short -race -fuzz=Fuzz_decodeBatchRandom -fuzztime 900s -timeout 10s ./pkg/scraper/client/resource/
 # Unit tests
 # ----------
+
 .PHONY: test-unit
 test-unit:
 	GO111MODULE=on GOARCH=$(ARCH) go test --test.short -race ./pkg/... ./cmd/...
@@ -151,22 +141,22 @@ test-image-all:
 # -----------
 
 .PHONY: test-e2e
-test-e2e: test-e2e-1.27
+test-e2e: test-e2e-1.24
 
 .PHONY: test-e2e-all
-test-e2e-all: test-e2e-1.27 test-e2e-1.26 test-e2e-1.25
+test-e2e-all: test-e2e-1.24 test-e2e-1.23 test-e2e-1.22
 
-.PHONY: test-e2e-1.27
-test-e2e-1.27:
-	NODE_IMAGE=kindest/node:v1.27.0@sha256:c6b22e613523b1af67d4bc8a0c38a4c3ea3a2b8fbc5b367ae36345c9cb844518 ./test/test-e2e.sh
+.PHONY: test-e2e-1.24
+test-e2e-1.24:
+	NODE_IMAGE=kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e ./test/test-e2e.sh
 
-.PHONY: test-e2e-1.26
-test-e2e-1.26:
-	NODE_IMAGE=kindest/node:v1.26.3@sha256:61b92f38dff6ccc29969e7aa154d34e38b89443af1a2c14e6cfbd2df6419c66f ./test/test-e2e.sh
+.PHONY: test-e2e-1.23
+test-e2e-1.23:
+	NODE_IMAGE=kindest/node:v1.23.0@sha256:49824ab1727c04e56a21a5d8372a402fcd32ea51ac96a2706a12af38934f81ac ./test/test-e2e.sh
+.PHONY: test-e2e-1.22
+test-e2e-1.22:
+	NODE_IMAGE=kindest/node:v1.22.0@sha256:b8bda84bb3a190e6e028b1760d277454a72267a5454b57db34437c34a588d047 ./test/test-e2e.sh
 
-.PHONY: test-e2e-1.25
-test-e2e-1.25:
-	NODE_IMAGE=kindest/node:v1.25.8@sha256:00d3f5314cc35327706776e95b2f8e504198ce59ac545d0200a89e69fce10b7f ./test/test-e2e.sh
 
 .PHONY: test-e2e-ha
 test-e2e-ha:
@@ -216,17 +206,17 @@ endif
 
 .PHONY: verify-lint
 verify-lint: golangci
-	$(GOPATH)/bin/golangci-lint run --timeout 10m --modules-download-mode=readonly || (echo 'Run "make update"' && exit 1)
+	golangci-lint run --timeout 10m --modules-download-mode=readonly || (echo 'Run "make update"' && exit 1)
 
 .PHONY: update-lint
 update-lint: golangci
-	$(GOPATH)/bin/golangci-lint run --fix --modules-download-mode=readonly
+	golangci-lint run --fix --modules-download-mode=readonly
 
-HAS_GOLANGCI_VERSION:=$(shell $(GOPATH)/bin/golangci-lint version --format=short > /dev/null 2>&1)
+HAS_GOLANGCI:=$(shell which golangci-lint)
 .PHONY: golangci
 golangci:
-ifneq ($(HAS_GOLANGCI_VERSION), $(GOLANGCI_VERSION))
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v$(GOLANGCI_VERSION)
+ifndef HAS_GOLANGCI
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.51.2
 endif
 
 # Table of Contents
@@ -289,7 +279,7 @@ verify-generated: update-generated
 update-generated:
 	# pkg/api/generated/openapi/zz_generated.openapi.go
 	go install -mod=readonly k8s.io/kube-openapi/cmd/openapi-gen
-	$(GOPATH)/bin/openapi-gen -i k8s.io/metrics/pkg/apis/metrics/v1beta1,k8s.io/apimachinery/pkg/apis/meta/v1,k8s.io/apimachinery/pkg/api/resource,k8s.io/apimachinery/pkg/version -p pkg/api/generated/openapi/ -O zz_generated.openapi -o $(REPO_DIR) -h $(REPO_DIR)/scripts/boilerplate.go.txt -r /dev/null
+	$(GOPATH)/bin/openapi-gen --logtostderr -i k8s.io/metrics/pkg/apis/metrics/v1beta1,k8s.io/apimachinery/pkg/apis/meta/v1,k8s.io/apimachinery/pkg/api/resource,k8s.io/apimachinery/pkg/version -p pkg/api/generated/openapi/ -O zz_generated.openapi -o $(REPO_DIR) -h $(REPO_DIR)/scripts/boilerplate.go.txt -r /dev/null
 
 # Deprecated
 # ----------

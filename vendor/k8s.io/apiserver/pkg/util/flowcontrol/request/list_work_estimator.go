@@ -29,16 +29,14 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func newListWorkEstimator(countFn objectCountGetterFunc, config *WorkEstimatorConfig) WorkEstimatorFunc {
+func newListWorkEstimator(countFn objectCountGetterFunc) WorkEstimatorFunc {
 	estimator := &listWorkEstimator{
-		config:        config,
 		countGetterFn: countFn,
 	}
 	return estimator.estimate
 }
 
 type listWorkEstimator struct {
-	config        *WorkEstimatorConfig
 	countGetterFn objectCountGetterFunc
 }
 
@@ -47,7 +45,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	if !ok {
 		// no RequestInfo should never happen, but to be on the safe side
 		// let's return maximumSeats
-		return WorkEstimate{InitialSeats: e.config.MaximumSeats}
+		return WorkEstimate{InitialSeats: maximumSeats}
 	}
 
 	if requestInfo.Name != "" {
@@ -56,7 +54,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// Example of such list requests:
 		// /apis/certificates.k8s.io/v1/certificatesigningrequests?fieldSelector=metadata.name%3Dcsr-xxs4m
 		// /api/v1/namespaces/test/configmaps?fieldSelector=metadata.name%3Dbig-deployment-1&limit=500&resourceVersion=0
-		return WorkEstimate{InitialSeats: e.config.MinimumSeats}
+		return WorkEstimate{InitialSeats: minimumSeats}
 	}
 
 	query := r.URL.Query()
@@ -66,7 +64,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 
 		// This request is destined to fail in the validation layer,
 		// return maximumSeats for this request to be consistent.
-		return WorkEstimate{InitialSeats: e.config.MaximumSeats}
+		return WorkEstimate{InitialSeats: maximumSeats}
 	}
 	isListFromCache := !shouldListFromStorage(query, &listOptions)
 
@@ -77,7 +75,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// be conservative here and allocate maximum seats to this list request.
 		// NOTE: if a CRD is removed, its count will go stale first and then the
 		// pruner will eventually remove the CRD from the cache.
-		return WorkEstimate{InitialSeats: e.config.MaximumSeats}
+		return WorkEstimate{InitialSeats: maximumSeats}
 	case err == ObjectCountNotFoundErr:
 		// there are multiple scenarios in which we can see this error:
 		//  a. the type is truly unknown, a typo on the caller's part.
@@ -91,12 +89,12 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// when aggregated API calls are overestimated, we allocate the minimum
 		// possible seats (see #109106 as an example when being more conservative
 		// led to problems).
-		return WorkEstimate{InitialSeats: e.config.MinimumSeats}
+		return WorkEstimate{InitialSeats: minimumSeats}
 	case err != nil:
 		// we should never be here since Get returns either ObjectCountStaleErr or
 		// ObjectCountNotFoundErr, return maximumSeats to be on the safe side.
 		klog.ErrorS(err, "Unexpected error from object count tracker")
-		return WorkEstimate{InitialSeats: e.config.MaximumSeats}
+		return WorkEstimate{InitialSeats: maximumSeats}
 	}
 
 	limit := numStored
@@ -122,14 +120,14 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	// will be processed by the list request.
 	// we will come up with a different formula for the transformation function and/or
 	// fine tune this number in future iteratons.
-	seats := uint64(math.Ceil(float64(estimatedObjectsToBeProcessed) / e.config.ObjectsPerSeat))
+	seats := uint(math.Ceil(float64(estimatedObjectsToBeProcessed) / float64(100)))
 
 	// make sure we never return a seat of zero
-	if seats < e.config.MinimumSeats {
-		seats = e.config.MinimumSeats
+	if seats < minimumSeats {
+		seats = minimumSeats
 	}
-	if seats > e.config.MaximumSeats {
-		seats = e.config.MaximumSeats
+	if seats > maximumSeats {
+		seats = maximumSeats
 	}
 	return WorkEstimate{InitialSeats: seats}
 }
@@ -147,11 +145,8 @@ func key(requestInfo *apirequest.RequestInfo) string {
 //	staging/src/k8s.io/apiserver/pkg/storage/cacher/cacher.go
 func shouldListFromStorage(query url.Values, opts *metav1.ListOptions) bool {
 	resourceVersion := opts.ResourceVersion
-	match := opts.ResourceVersionMatch
 	pagingEnabled := utilfeature.DefaultFeatureGate.Enabled(features.APIListChunking)
 	hasContinuation := pagingEnabled && len(opts.Continue) > 0
 	hasLimit := pagingEnabled && opts.Limit > 0 && resourceVersion != "0"
-	unsupportedMatch := match != "" && match != metav1.ResourceVersionMatchNotOlderThan
-
-	return resourceVersion == "" || hasContinuation || hasLimit || unsupportedMatch
+	return resourceVersion == "" || hasContinuation || hasLimit || opts.ResourceVersionMatch == metav1.ResourceVersionMatchExact
 }

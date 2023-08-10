@@ -19,12 +19,9 @@ package handlers
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"time"
-
-	"golang.org/x/net/websocket"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,8 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
 	"k8s.io/apiserver/pkg/endpoints/metrics"
-	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/util/wsstream"
+
+	"golang.org/x/net/websocket"
 )
 
 // nothing will ever be sent down this channel
@@ -106,11 +104,6 @@ func serveWatch(watcher watch.Interface, scope *RequestScope, mediaTypeOptions n
 		embeddedEncoder = scope.Serializer.EncoderForVersion(serializer.Serializer, contentKind.GroupVersion())
 	}
 
-	var serverShuttingDownCh <-chan struct{}
-	if signals := apirequest.ServerShutdownSignalFrom(req.Context()); signals != nil {
-		serverShuttingDownCh = signals.ShuttingDown()
-	}
-
 	ctx := req.Context()
 
 	server := &WatchServer{
@@ -138,8 +131,7 @@ func serveWatch(watcher watch.Interface, scope *RequestScope, mediaTypeOptions n
 			return result
 		},
 
-		TimeoutFactory:       &realTimeoutFactory{timeout},
-		ServerShuttingDownCh: serverShuttingDownCh,
+		TimeoutFactory: &realTimeoutFactory{timeout},
 	}
 
 	server.ServeHTTP(w, req)
@@ -163,14 +155,15 @@ type WatchServer struct {
 	// used to correct the object before we send it to the serializer
 	Fixup func(runtime.Object) runtime.Object
 
-	TimeoutFactory       TimeoutFactory
-	ServerShuttingDownCh <-chan struct{}
+	TimeoutFactory TimeoutFactory
 }
 
 // ServeHTTP serves a series of encoded events via HTTP with Transfer-Encoding: chunked
 // or over a websocket connection.
 func (s *WatchServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	kind := s.Scope.Kind
+	metrics.RegisteredWatchers.WithContext(req.Context()).WithLabelValues(kind.Group, kind.Version, kind.Kind).Inc()
+	defer metrics.RegisteredWatchers.WithContext(req.Context()).WithLabelValues(kind.Group, kind.Version, kind.Kind).Dec()
 
 	if wsstream.IsWebSocketRequest(req) {
 		w.Header().Set("Content-Type", s.MediaType)
@@ -194,17 +187,7 @@ func (s *WatchServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.Scope.err(errors.NewBadRequest(err.Error()), w, req)
 		return
 	}
-
-	var e streaming.Encoder
-	var memoryAllocator runtime.MemoryAllocator
-
-	if encoder, supportsAllocator := s.Encoder.(runtime.EncoderWithAllocator); supportsAllocator {
-		memoryAllocator = runtime.AllocatorPool.Get().(*runtime.Allocator)
-		defer runtime.AllocatorPool.Put(memoryAllocator)
-		e = streaming.NewEncoderWithAllocator(framer, encoder, memoryAllocator)
-	} else {
-		e = streaming.NewEncoder(framer, s.Encoder)
-	}
+	e := streaming.NewEncoder(framer, s.Encoder)
 
 	// ensure the connection times out
 	timeoutCh, cleanup := s.TimeoutFactory.TimeoutCh()
@@ -223,30 +206,8 @@ func (s *WatchServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ch := s.Watching.ResultChan()
 	done := req.Context().Done()
 
-	embeddedEncodeFn := s.EmbeddedEncoder.Encode
-	if encoder, supportsAllocator := s.EmbeddedEncoder.(runtime.EncoderWithAllocator); supportsAllocator {
-		if memoryAllocator == nil {
-			// don't put the allocator inside the embeddedEncodeFn as that would allocate memory on every call.
-			// instead, we allocate the buffer for the entire watch session and release it when we close the connection.
-			memoryAllocator = runtime.AllocatorPool.Get().(*runtime.Allocator)
-			defer runtime.AllocatorPool.Put(memoryAllocator)
-		}
-		embeddedEncodeFn = func(obj runtime.Object, w io.Writer) error {
-			return encoder.EncodeWithAllocator(obj, w, memoryAllocator)
-		}
-	}
-
 	for {
 		select {
-		case <-s.ServerShuttingDownCh:
-			// the server has signaled that it is shutting down (not accepting
-			// any new request), all active watch request(s) should return
-			// immediately here. The WithWatchTerminationDuringShutdown server
-			// filter will ensure that the response to the client is rate
-			// limited in order to avoid any thundering herd issue when the
-			// client(s) try to reestablish the WATCH on the other
-			// available apiserver instance(s).
-			return
 		case <-done:
 			return
 		case <-timeoutCh:
@@ -259,7 +220,7 @@ func (s *WatchServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			metrics.WatchEvents.WithContext(req.Context()).WithLabelValues(kind.Group, kind.Version, kind.Kind).Inc()
 
 			obj := s.Fixup(event.Object)
-			if err := embeddedEncodeFn(obj, buf); err != nil {
+			if err := s.EmbeddedEncoder.Encode(obj, buf); err != nil {
 				// unexpected error
 				utilruntime.HandleError(fmt.Errorf("unable to encode watch object %T: %v", obj, err))
 				return

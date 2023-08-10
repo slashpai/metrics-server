@@ -15,14 +15,12 @@ package options
 
 import (
 	"testing"
-	"time"
-
-	"github.com/google/go-cmp/cmp"
-
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/metrics-server/pkg/scraper/client"
+
+	"github.com/google/go-cmp/cmp"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/rest"
 )
 
 func TestConfig(t *testing.T) {
@@ -166,16 +164,14 @@ func TestValidate(t *testing.T) {
 			options: &KubeletClientOptions{
 				DeprecatedCompletelyInsecureKubelet: true,
 				KubeletCAFile:                       "a",
-				KubeletRequestTimeout:               1 * time.Second,
 			},
 			expectedErrorCount: 1,
 		},
 		{
 			name: "Cannot use both --kubelet-certificate-authority and --kubelet-insecure-tls",
 			options: &KubeletClientOptions{
-				InsecureKubeletTLS:    true,
-				KubeletCAFile:         "a",
-				KubeletRequestTimeout: 1 * time.Second,
+				InsecureKubeletTLS: true,
+				KubeletCAFile:      "a",
 			},
 			expectedErrorCount: 1,
 		},
@@ -184,7 +180,6 @@ func TestValidate(t *testing.T) {
 			options: &KubeletClientOptions{
 				KubeletClientKeyFile:  "a",
 				KubeletClientCertFile: "b",
-				KubeletRequestTimeout: 1 * time.Second,
 			},
 			expectedErrorCount: 0,
 		},
@@ -193,7 +188,6 @@ func TestValidate(t *testing.T) {
 			options: &KubeletClientOptions{
 				KubeletClientCertFile:               "a",
 				DeprecatedCompletelyInsecureKubelet: true,
-				KubeletRequestTimeout:               1 * time.Second,
 			},
 			expectedErrorCount: 2,
 		},
@@ -202,7 +196,6 @@ func TestValidate(t *testing.T) {
 			options: &KubeletClientOptions{
 				KubeletClientKeyFile:                "a",
 				DeprecatedCompletelyInsecureKubelet: true,
-				KubeletRequestTimeout:               1 * time.Second,
 			},
 			expectedErrorCount: 2,
 		},
@@ -211,7 +204,6 @@ func TestValidate(t *testing.T) {
 			options: &KubeletClientOptions{
 				InsecureKubeletTLS:                  true,
 				DeprecatedCompletelyInsecureKubelet: true,
-				KubeletRequestTimeout:               1 * time.Second,
 			},
 			expectedErrorCount: 1,
 		},
@@ -219,36 +211,13 @@ func TestValidate(t *testing.T) {
 			name: "cannot give only --kubelet-client-key, give --kubelet-key-file as well",
 			options: &KubeletClientOptions{
 				KubeletClientCertFile: "a",
-				KubeletRequestTimeout: 1 * time.Second,
 			},
 			expectedErrorCount: 1,
 		},
 		{
 			name: "cannot give only --kubelet-client-key, give --kubelet-certificate-authority as well",
 			options: &KubeletClientOptions{
-				KubeletClientKeyFile:  "a",
-				KubeletRequestTimeout: 1 * time.Second,
-			},
-			expectedErrorCount: 1,
-		},
-		{
-			name: "can give --kubelet-request-timeout value larger than 0",
-			options: &KubeletClientOptions{
-				KubeletRequestTimeout: 1 * time.Second,
-			},
-			expectedErrorCount: 0,
-		},
-		{
-			name: "cannot give --kubelet-request-timeout value equal 0",
-			options: &KubeletClientOptions{
-				KubeletRequestTimeout: 0 * time.Second,
-			},
-			expectedErrorCount: 1,
-		},
-		{
-			name: "cannot give --kubelet-request-timeout value less than 0",
-			options: &KubeletClientOptions{
-				KubeletRequestTimeout: -10 * time.Second,
+				KubeletClientKeyFile: "a",
 			},
 			expectedErrorCount: 1,
 		},

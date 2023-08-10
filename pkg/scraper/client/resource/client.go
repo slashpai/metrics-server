@@ -19,19 +19,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
+	"time"
+
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
-	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
-
 	"sigs.k8s.io/metrics-server/pkg/scraper/client"
 	"sigs.k8s.io/metrics-server/pkg/storage"
 	"sigs.k8s.io/metrics-server/pkg/utils"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 type kubeletClient struct {
@@ -67,8 +68,7 @@ func newClient(c *http.Client, resolver utils.NodeAddressResolver, defaultPort i
 		useNodeStatusPort: useNodeStatusPort,
 		buffers: sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, 10e3)
-				return &buf
+				return make([]byte, 10e3)
 			},
 		},
 	}
@@ -107,20 +107,17 @@ func (kc *kubeletClient) getMetrics(ctx context.Context, url, nodeName string) (
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request failed, status: %q", response.Status)
 	}
-	bp := kc.buffers.Get().(*[]byte)
-	b := *bp
-	defer func() {
-		*bp = b
-		kc.buffers.Put(bp)
-	}()
+	b := kc.buffers.Get().([]byte)
 	buf := bytes.NewBuffer(b)
 	buf.Reset()
 	_, err = io.Copy(buf, response.Body)
 	if err != nil {
+		kc.buffers.Put(b)
 		return nil, fmt.Errorf("failed to read response body - %v", err)
 	}
 	b = buf.Bytes()
 	ms, err := decodeBatch(b, requestTime, nodeName)
+	kc.buffers.Put(b)
 	if err != nil {
 		return nil, err
 	}

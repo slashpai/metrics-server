@@ -284,18 +284,12 @@ func (mp fakeNodeMetricsGetter) GetNodeMetrics(nodes ...*corev1.Node) ([]metrics
 }
 
 func NewTestNodeStorage(listerError error) *nodeMetrics {
-	var labelSelector []labels.Requirement
-	if ns, err := labels.ParseToRequirements("skipKey!=skipValue"); err == nil {
-		labelSelector = ns
-	}
-
 	return &nodeMetrics{
 		nodeLister: fakeNodeLister{
 			data: createTestNodes(),
 			err:  listerError,
 		},
-		metrics:      fakeNodeMetricsGetter{now: myClock.Now()},
-		nodeSelector: labelSelector,
+		metrics: fakeNodeMetricsGetter{now: myClock.Now()},
 	}
 }
 
@@ -323,10 +317,7 @@ func createTestNodes() []*corev1.Node {
 	node4 := &corev1.Node{}
 	node4.Name = "node4"
 	node4.Labels = nodeLabels(node4.Name)
-	node5 := &corev1.Node{}
-	node5.Name = "node5"
-	node4.Labels = nodeLabels(node5.Name)
-	return []*corev1.Node{node1, node2, node3, node4, node5}
+	return []*corev1.Node{node1, node2, node3, node4}
 }
 
 func nodeLabels(name string) map[string]string {
@@ -340,8 +331,6 @@ func nodeLabels(name string) map[string]string {
 		labels["labelKey"] = "otherValue"
 	case "node4":
 		labels["otherKey"] = "otherValue"
-	case "node5":
-		labels["skipKey"] = "skipValue"
 	}
 	return labels
 }

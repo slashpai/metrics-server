@@ -1,11 +1,11 @@
-FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.20-openshift-4.15 AS builder
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.21-openshift-4.16 AS builder
 
 COPY . /go/src/sigs.k8s.io/metrics-server
 
 WORKDIR /go/src/sigs.k8s.io/metrics-server
 RUN make metrics-server-ocp -f Makefile.ocp
 
-FROM registry.ci.openshift.org/ocp/4.15:base
+FROM registry.ci.openshift.org/ocp/4.16:base
 
 COPY --from=builder /go/src/sigs.k8s.io/metrics-server/metrics-server /usr/bin/metrics-server
 

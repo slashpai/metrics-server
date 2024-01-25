@@ -1,11 +1,24 @@
-# See the OWNERS docs: https://go.k8s.io/owners
-approvers:
-- s-urbaniak
-- serathius
-- dgrisonnet
-- logicalhan
+component: "Monitoring"
+
 reviewers:
-- dgrisonnet
-- s-urbaniak
-- serathius
-- yangjunmyfm192085
+- simonpasquier
+- jan--f
+- raptorsun
+- slashpai
+- sthaha
+- danielmellado
+- marioferh
+- rexagod
+- machine424
+
+approvers:
+- bparees
+- simonpasquier
+- jan--f
+- raptorsun
+- slashpai
+- sthaha
+- danielmellado
+- marioferh
+- rexagod
+- machine424

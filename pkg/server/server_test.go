@@ -20,15 +20,15 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/metrics/pkg/apis/metrics"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/metrics/pkg/apis/metrics"
+
 	"sigs.k8s.io/metrics-server/pkg/scraper"
 	"sigs.k8s.io/metrics-server/pkg/storage"
-
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 )
 
 func TestServer(t *testing.T) {
@@ -76,7 +76,7 @@ var _ = Describe("Server", func() {
 		check := server.probeMetricCollectionTimely("")
 		Expect(check.Check(nil)).To(Succeed())
 	})
-	It("metric-collection-timely probe should fail if last scrape took longer then expected", func() {
+	It("metric-collection-timely probe should fail if last scrape took longer than expected", func() {
 		server.tick(context.Background(), time.Now().Add(-2*resolution))
 		check := server.probeMetricCollectionTimely("")
 		Expect(check.Check(nil)).NotTo(Succeed())

@@ -16,10 +16,9 @@ package scraper
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"time"
-
-	"sigs.k8s.io/metrics-server/pkg/scraper/client"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -28,6 +27,7 @@ import (
 	"k8s.io/component-base/metrics"
 	"k8s.io/klog/v2"
 
+	"sigs.k8s.io/metrics-server/pkg/scraper/client"
 	"sigs.k8s.io/metrics-server/pkg/storage"
 )
 
@@ -83,11 +83,16 @@ func RegisterScraperMetrics(registrationFunc func(metrics.Registerable) error) e
 	return nil
 }
 
-func NewScraper(nodeLister v1listers.NodeLister, client client.KubeletMetricsGetter, scrapeTimeout time.Duration) *scraper {
+func NewScraper(nodeLister v1listers.NodeLister, client client.KubeletMetricsGetter, scrapeTimeout time.Duration, labelRequirement []labels.Requirement) *scraper {
+	labelSelector := labels.Everything()
+	if labelRequirement != nil {
+		labelSelector = labelSelector.Add(labelRequirement...)
+	}
 	return &scraper{
 		nodeLister:    nodeLister,
 		kubeletClient: client,
 		scrapeTimeout: scrapeTimeout,
+		labelSelector: labelSelector,
 	}
 }
 
@@ -95,6 +100,7 @@ type scraper struct {
 	nodeLister    v1listers.NodeLister
 	kubeletClient client.KubeletMetricsGetter
 	scrapeTimeout time.Duration
+	labelSelector labels.Selector
 }
 
 var _ Scraper = (*scraper)(nil)
@@ -107,12 +113,12 @@ type NodeInfo struct {
 }
 
 func (c *scraper) Scrape(baseCtx context.Context) *storage.MetricsBatch {
-	nodes, err := c.nodeLister.List(labels.Everything())
+	nodes, err := c.nodeLister.List(c.labelSelector)
 	if err != nil {
 		// report the error and continue on in case of partial results
 		klog.ErrorS(err, "Failed to list nodes")
 	}
-	klog.V(1).InfoS("Scraping metrics from nodes", "nodeCount", len(nodes))
+	klog.V(1).InfoS("Scraping metrics from nodes", "nodes", klog.KObjSlice(nodes), "nodeCount", len(nodes), "nodeSelector", c.labelSelector)
 
 	responseChannel := make(chan *storage.MetricsBatch, len(nodes))
 	defer close(responseChannel)
@@ -132,12 +138,16 @@ func (c *scraper) Scrape(baseCtx context.Context) *storage.MetricsBatch {
 			time.Sleep(sleepDuration)
 			// make the timeout a bit shorter to account for staggering, so we still preserve
 			// the overall timeout
-			ctx, cancelTimeout := context.WithTimeout(baseCtx, c.scrapeTimeout-sleepDuration)
+			ctx, cancelTimeout := context.WithTimeout(baseCtx, c.scrapeTimeout)
 			defer cancelTimeout()
 			klog.V(2).InfoS("Scraping node", "node", klog.KObj(node))
 			m, err := c.collectNode(ctx, node)
 			if err != nil {
-				klog.ErrorS(err, "Failed to scrape node", "node", klog.KObj(node))
+				if errors.Is(err, context.DeadlineExceeded) {
+					klog.ErrorS(err, "Failed to scrape node, timeout to access kubelet", "node", klog.KObj(node), "timeout", c.scrapeTimeout)
+				} else {
+					klog.ErrorS(err, "Failed to scrape node", "node", klog.KObj(node))
+				}
 			}
 			responseChannel <- m
 		}(node)

@@ -1,4 +1,4 @@
-apiVersion: skaffold/v2beta14
+apiVersion: skaffold/v2beta29
 kind: Config
 metadata:
   name: metrics-server
@@ -19,12 +19,12 @@ profiles:
     deploy:
       kustomize:
         paths:
-          - manifests/test
+          - manifests/overlays/test
   - name: test-ha
     deploy:
       kustomize:
         paths:
-          - manifests/test-ha
+          - manifests/overlays/test-ha
   - name: helm
     deploy:
       helm:
@@ -39,6 +39,6 @@ profiles:
               image.tag: "{{.IMAGE_TAG}}"
             setValues:
               podLabels: { k8s-app: metrics-server }
-              containerPort: 4443
+              containerPort: 10250
             valuesFiles:
-              - charts/metrics-server/ci/ci-values.yaml
+              - test/chart-values.yaml

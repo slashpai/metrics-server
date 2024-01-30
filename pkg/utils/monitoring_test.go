@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"k8s.io/component-base/metrics"
@@ -59,7 +59,7 @@ var _ = Describe("Prometheus Bucket Estimator", func() {
 			Expect(BucketsForScrapeDuration(5 * time.Second)).To(ContainElement(5.0))
 		})
 	})
-	Context("with a scrape timeout equalt to the max default bucket", func() {
+	Context("with a scrape timeout equals to the max default bucket", func() {
 		maxBucket := metrics.DefBuckets[len(metrics.DefBuckets)-1]
 		maxBucketDuration := time.Duration(maxBucket) * time.Second
 

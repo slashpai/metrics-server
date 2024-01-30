@@ -33,8 +33,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
-	auditv1alpha1 "k8s.io/apiserver/pkg/apis/audit/v1alpha1"
-	auditv1beta1 "k8s.io/apiserver/pkg/apis/audit/v1beta1"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/audit/policy"
 	"k8s.io/apiserver/pkg/server"
@@ -144,16 +142,6 @@ type AuditWebhookOptions struct {
 	GroupVersionString string
 }
 
-// AuditDynamicOptions control the configuration of dynamic backends for audit events
-type AuditDynamicOptions struct {
-	// Enabled tells whether the dynamic audit capability is enabled.
-	Enabled bool
-
-	// Configuration for batching backend. This is currently only used as an override
-	// for integration tests
-	BatchConfig *pluginbuffered.BatchConfig
-}
-
 func NewAuditOptions() *AuditOptions {
 	return &AuditOptions{
 		WebhookOptions: AuditWebhookOptions{
@@ -236,8 +224,6 @@ func validateBackendBatchOptions(pluginName string, options AuditBatchOptions) e
 }
 
 var knownGroupVersions = []schema.GroupVersion{
-	auditv1alpha1.SchemeGroupVersion,
-	auditv1beta1.SchemeGroupVersion,
 	auditv1.SchemeGroupVersion,
 }
 

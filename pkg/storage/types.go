@@ -20,11 +20,11 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/metrics-server/pkg/api"
 
-	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/metrics-server/pkg/api"
 )
 
 // MetricsBatch is a single batch of pod, container, and node metrics from some source.
@@ -51,6 +51,9 @@ type MetricsPoint struct {
 }
 
 func resourceUsage(last, prev MetricsPoint) (corev1.ResourceList, api.TimeInfo, error) {
+	if last.StartTime.Before(prev.StartTime) {
+		return corev1.ResourceList{}, api.TimeInfo{}, fmt.Errorf("unexpected decrease in startTime of node/container")
+	}
 	if last.CumulativeCpuUsed < prev.CumulativeCpuUsed {
 		return corev1.ResourceList{}, api.TimeInfo{}, fmt.Errorf("unexpected decrease in cumulative CPU usage value")
 	}
@@ -73,7 +76,7 @@ func uint64Quantity(val uint64, format resource.Format, scale resource.Scale) re
 	if val > math.MaxInt64 {
 		// lose an decimal order-of-magnitude precision,
 		// so we can fit into a scaled quantity
-		klog.V(2).InfoS("Found unexpectedly large resource value, loosing precision to fit in scaled resource.Quantity", "value", val)
+		klog.V(2).InfoS("Found unexpectedly large resource value, losing precision to fit in scaled resource.Quantity", "value", val)
 		q = *resource.NewScaledQuantity(int64(val/10), resource.Scale(1)+scale)
 	}
 	q.Format = format

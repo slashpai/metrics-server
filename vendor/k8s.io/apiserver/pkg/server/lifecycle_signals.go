@@ -120,6 +120,15 @@ type lifecycleSignals struct {
 	// ShutdownDelayDuration allows the apiserver to delay shutdown for some time.
 	AfterShutdownDelayDuration lifecycleSignal
 
+	// PreShutdownHooksStopped event is signaled when all registered
+	// preshutdown hook(s) have finished running.
+	PreShutdownHooksStopped lifecycleSignal
+
+	// NotAcceptingNewRequest event is signaled when the server is no
+	// longer accepting any new request, from this point on any new
+	// request will receive an error.
+	NotAcceptingNewRequest lifecycleSignal
+
 	// InFlightRequestsDrained event is signaled when the existing requests
 	// in flight have completed. This is used as signal to shut down the audit backends
 	InFlightRequestsDrained lifecycleSignal
@@ -137,12 +146,22 @@ type lifecycleSignals struct {
 	MuxAndDiscoveryComplete lifecycleSignal
 }
 
+// ShuttingDown returns the lifecycle signal that is signaled when
+// the server is not accepting any new requests.
+// this is the lifecycle event that is exported to the request handler
+// logic to indicate that the server is shutting down.
+func (s lifecycleSignals) ShuttingDown() <-chan struct{} {
+	return s.NotAcceptingNewRequest.Signaled()
+}
+
 // newLifecycleSignals returns an instance of lifecycleSignals interface to be used
 // to coordinate lifecycle of the apiserver
 func newLifecycleSignals() lifecycleSignals {
 	return lifecycleSignals{
 		ShutdownInitiated:          newNamedChannelWrapper("ShutdownInitiated"),
 		AfterShutdownDelayDuration: newNamedChannelWrapper("AfterShutdownDelayDuration"),
+		PreShutdownHooksStopped:    newNamedChannelWrapper("PreShutdownHooksStopped"),
+		NotAcceptingNewRequest:     newNamedChannelWrapper("NotAcceptingNewRequest"),
 		InFlightRequestsDrained:    newNamedChannelWrapper("InFlightRequestsDrained"),
 		HTTPServerStoppedListening: newNamedChannelWrapper("HTTPServerStoppedListening"),
 		HasBeenReady:               newNamedChannelWrapper("HasBeenReady"),

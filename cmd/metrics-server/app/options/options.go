@@ -26,6 +26,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/logs"
+	logsapi "k8s.io/component-base/logs/api/v1"
+	_ "k8s.io/component-base/logs/json/register"
 
 	"sigs.k8s.io/metrics-server/pkg/api"
 	generatedopenapi "sigs.k8s.io/metrics-server/pkg/api/generated/openapi"
@@ -33,13 +36,14 @@ import (
 )
 
 type Options struct {
-	// genericoptions.ReccomendedOptions - EtcdOptions
+	// genericoptions.RecomendedOptions - EtcdOptions
 	SecureServing  *genericoptions.SecureServingOptionsWithLoopback
 	Authentication *genericoptions.DelegatingAuthenticationOptions
 	Authorization  *genericoptions.DelegatingAuthorizationOptions
 	Audit          *genericoptions.AuditOptions
 	Features       *genericoptions.FeatureOptions
 	KubeletClient  *KubeletClientOptions
+	Logging        *logs.Options
 
 	MetricResolution time.Duration
 	ShowVersion      bool
@@ -51,8 +55,21 @@ type Options struct {
 
 func (o *Options) Validate() []error {
 	errors := o.KubeletClient.Validate()
+	errors = append(errors, o.validate()...)
+	err := logsapi.ValidateAndApply(o.Logging, nil)
+	if err != nil {
+		errors = append(errors, err)
+	}
+	return errors
+}
+
+func (o *Options) validate() []error {
+	errors := []error{}
 	if o.MetricResolution < 10*time.Second {
 		errors = append(errors, fmt.Errorf("metric-resolution should be a time duration at least 10s, but value %v provided", o.MetricResolution))
+	}
+	if o.MetricResolution*9/10 < o.KubeletClient.KubeletRequestTimeout {
+		errors = append(errors, fmt.Errorf("metric-resolution should be larger than kubelet-request-timeout, but metric-resolution value %v kubelet-request-timeout value %v provided", o.MetricResolution, o.KubeletClient.KubeletRequestTimeout))
 	}
 	return errors
 }
@@ -69,6 +86,7 @@ func (o *Options) Flags() (fs flag.NamedFlagSets) {
 	o.Authorization.AddFlags(fs.FlagSet("apiserver authorization"))
 	o.Audit.AddFlags(fs.FlagSet("apiserver audit log"))
 	o.Features.AddFlags(fs.FlagSet("features"))
+	logsapi.AddFlags(o.Logging, fs.FlagSet("logging"))
 
 	return fs
 }
@@ -82,6 +100,7 @@ func NewOptions() *Options {
 		Features:       genericoptions.NewFeatureOptions(),
 		Audit:          genericoptions.NewAuditOptions(),
 		KubeletClient:  NewKubeletClientOptions(),
+		Logging:        logs.NewOptions(),
 
 		MetricResolution: 60 * time.Second,
 	}
@@ -101,7 +120,8 @@ func (o Options) ServerConfig() (*server.Config, error) {
 		Rest:             restConfig,
 		Kubelet:          o.KubeletClient.Config(restConfig),
 		MetricResolution: o.MetricResolution,
-		ScrapeTimeout:    time.Duration(float64(o.MetricResolution) * 0.90), // scrape timeout is 90% of the scrape interval
+		ScrapeTimeout:    o.KubeletClient.KubeletRequestTimeout,
+		NodeSelector:     o.KubeletClient.NodeSelector,
 	}, nil
 }
 
@@ -132,8 +152,11 @@ func (o Options) ApiserverConfig() (*genericapiserver.Config, error) {
 	serverConfig.Version = &versionGet
 	// enable OpenAPI schemas
 	serverConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme))
+	serverConfig.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme))
 	serverConfig.OpenAPIConfig.Info.Title = "Kubernetes metrics-server"
+	serverConfig.OpenAPIV3Config.Info.Title = "Kubernetes metrics-server"
 	serverConfig.OpenAPIConfig.Info.Version = strings.Split(serverConfig.Version.String(), "-")[0] // TODO(directxman12): remove this once autosetting this doesn't require security definitions
+	serverConfig.OpenAPIV3Config.Info.Version = strings.Split(serverConfig.Version.String(), "-")[0]
 
 	return serverConfig, nil
 }

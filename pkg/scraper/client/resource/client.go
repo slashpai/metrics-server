@@ -19,20 +19,24 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
-	"time"
-
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
+
 	"sigs.k8s.io/metrics-server/pkg/scraper/client"
 	"sigs.k8s.io/metrics-server/pkg/storage"
 	"sigs.k8s.io/metrics-server/pkg/utils"
+)
 
-	corev1 "k8s.io/api/core/v1"
+const (
+	// AnnotationResourceMetricsPath is the annotation used to specify the path to the resource metrics endpoint.
+	AnnotationResourceMetricsPath = "metrics.k8s.io/resource-metrics-path"
 )
 
 type kubeletClient struct {
@@ -68,7 +72,8 @@ func newClient(c *http.Client, resolver utils.NodeAddressResolver, defaultPort i
 		useNodeStatusPort: useNodeStatusPort,
 		buffers: sync.Pool{
 			New: func() interface{} {
-				return make([]byte, 10e3)
+				buf := make([]byte, 10e3)
+				return &buf
 			},
 		},
 	}
@@ -77,9 +82,13 @@ func newClient(c *http.Client, resolver utils.NodeAddressResolver, defaultPort i
 // GetMetrics implements client.KubeletMetricsGetter
 func (kc *kubeletClient) GetMetrics(ctx context.Context, node *corev1.Node) (*storage.MetricsBatch, error) {
 	port := kc.defaultPort
+	path := "/metrics/resource"
 	nodeStatusPort := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
 	if kc.useNodeStatusPort && nodeStatusPort != 0 {
 		port = nodeStatusPort
+	}
+	if metricsPath := node.Annotations[AnnotationResourceMetricsPath]; metricsPath != "" {
+		path = metricsPath
 	}
 	addr, err := kc.addrResolver.NodeAddress(node)
 	if err != nil {
@@ -88,7 +97,7 @@ func (kc *kubeletClient) GetMetrics(ctx context.Context, node *corev1.Node) (*st
 	url := url.URL{
 		Scheme: kc.scheme,
 		Host:   net.JoinHostPort(addr, strconv.Itoa(port)),
-		Path:   "/metrics/resource",
+		Path:   path,
 	}
 	return kc.getMetrics(ctx, url.String(), node.Name)
 }
@@ -107,17 +116,20 @@ func (kc *kubeletClient) getMetrics(ctx context.Context, url, nodeName string) (
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request failed, status: %q", response.Status)
 	}
-	b := kc.buffers.Get().([]byte)
+	bp := kc.buffers.Get().(*[]byte)
+	b := *bp
+	defer func() {
+		*bp = b
+		kc.buffers.Put(bp)
+	}()
 	buf := bytes.NewBuffer(b)
 	buf.Reset()
 	_, err = io.Copy(buf, response.Body)
 	if err != nil {
-		kc.buffers.Put(b)
 		return nil, fmt.Errorf("failed to read response body - %v", err)
 	}
 	b = buf.Bytes()
 	ms, err := decodeBatch(b, requestTime, nodeName)
-	kc.buffers.Put(b)
 	if err != nil {
 		return nil, err
 	}

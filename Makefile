@@ -2,6 +2,14 @@
 # --------------------------
 REGISTRY?=gcr.io/k8s-staging-metrics-server
 ARCH?=amd64
+OS?=linux
+BINARY_NAME?=metrics-server-$(OS)-$(ARCH)
+
+ifeq ($(OS),windows)
+BINARY_NAME:=$(BINARY_NAME).exe
+endif
+
+OUTPUT_DIR?=_output
 
 # Release variables
 # ------------------
@@ -14,12 +22,20 @@ BUILD_DATE:=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 ALL_ARCHITECTURES=amd64 arm arm64 ppc64le s390x
 export DOCKER_CLI_EXPERIMENTAL=enabled
 
+ALL_BINARIES_PLATFORMS= $(addprefix linux/,$(ALL_ARCHITECTURES)) \
+						darwin/amd64 \
+						darwin/arm64 \
+						windows/amd64 \
+						windows/arm64
+
+# Tools versions
+# --------------
+GOLANGCI_VERSION:=1.55.2
+
 # Computed variables
 # ------------------
-HAS_GOLANGCI:=$(shell which golangci-lint)
 GOPATH:=$(shell go env GOPATH)
 REPO_DIR:=$(shell pwd)
-LDFLAGS=-w $(VERSION_LDFLAGS)
 
 .PHONY: all
 all: metrics-server
@@ -30,10 +46,22 @@ all: metrics-server
 SRC_DEPS=$(shell find pkg cmd -type f -name "*.go") go.mod go.sum
 CHECKSUM=$(shell md5sum $(SRC_DEPS) | md5sum | awk '{print $$1}')
 PKG:=k8s.io/client-go/pkg
-LDFLAGS:=-X $(PKG)/version.gitVersion=$(GIT_TAG) -X $(PKG)/version.gitCommit=$(GIT_COMMIT) -X $(PKG)/version.buildDate=$(BUILD_DATE)
+VERSION_LDFLAGS:=-X $(PKG)/version.gitVersion=$(GIT_TAG) -X $(PKG)/version.gitCommit=$(GIT_COMMIT) -X $(PKG)/version.buildDate=$(BUILD_DATE)
+LDFLAGS:=-w $(VERSION_LDFLAGS)
 
-metrics-server: $(SRC_DEPS)
-	GOARCH=$(ARCH) CGO_ENABLED=0 go build -mod=readonly -ldflags "$(LDFLAGS)" -o metrics-server sigs.k8s.io/metrics-server/cmd/metrics-server
+metrics-server:
+	OUTPUT_DIR=. BINARY_NAME=$@ $(MAKE) build
+
+.PHONY: build
+build: $(SRC_DEPS)
+	@mkdir -p $(OUTPUT_DIR)
+	GOARCH=$(ARCH) GOOS=$(OS) CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags "$(LDFLAGS)" -o "$(OUTPUT_DIR)/$(BINARY_NAME)" sigs.k8s.io/metrics-server/cmd/metrics-server
+
+.PHONY: build-all
+build-all:
+	@for platform in $(ALL_BINARIES_PLATFORMS); do \
+		OS="$${platform%/*}" ARCH="$${platform#*/}" $(MAKE) build; \
+	done
 
 # Image Rules
 # -----------
@@ -44,7 +72,7 @@ CONTAINER_ARCH_TARGETS=$(addprefix container-,$(ALL_ARCHITECTURES))
 container:
 	# Pull base image explicitly. Keep in sync with Dockerfile, otherwise
 	# GCB builds will start failing.
-	docker pull golang:1.19.11
+	docker pull golang:1.21.4
 	docker build -t $(REGISTRY)/metrics-server-$(ARCH):$(CHECKSUM) --build-arg ARCH=$(ARCH) --build-arg GIT_TAG=$(GIT_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) .
 
 .PHONY: container-all
@@ -87,14 +115,21 @@ release-tag:
 
 .PHONY: release-manifests
 release-manifests:
-	mkdir -p _output
-	kubectl kustomize manifests/release > _output/components.yaml
-	kubectl kustomize manifests/high-availability > _output/high-availability.yaml
-	kubectl kustomize manifests/high-availability-1.21+ > _output/high-availability-1.21+.yaml
+	mkdir -p $(OUTPUT_DIR)
+	kubectl kustomize manifests/overlays/release > $(OUTPUT_DIR)/components.yaml
+	kubectl kustomize manifests/overlays/release-ha > $(OUTPUT_DIR)/high-availability.yaml
+	kubectl kustomize manifests/overlays/release-ha-1.21+ > $(OUTPUT_DIR)/high-availability-1.21+.yaml
 
-# Unit tests
+
+# fuzz tests
 # ----------
 
+.PHONY: test-fuzz
+test-fuzz:
+	GO111MODULE=on GOARCH=$(ARCH) go test --test.short -race -fuzz=Fuzz_decodeBatchPrometheusFormat -fuzztime 900s -timeout 10s ./pkg/scraper/client/resource/
+	GO111MODULE=on GOARCH=$(ARCH) go test --test.short -race -fuzz=Fuzz_decodeBatchRandom -fuzztime 900s -timeout 10s ./pkg/scraper/client/resource/
+# Unit tests
+# ----------
 .PHONY: test-unit
 test-unit:
 	GO111MODULE=on GOARCH=$(ARCH) go test --test.short -race ./pkg/... ./cmd/...
@@ -102,28 +137,28 @@ test-unit:
 # Benchmarks
 # ----------
 
-HAS_BENCH_STORAGE=$(wildcard ./_output/bench_storage.txt)
+HAS_BENCH_STORAGE=$(wildcard ./$(OUTPUT_DIR)/bench_storage.txt)
 
 .PHONY: bench-storage
 bench-storage: benchstat
-	@mkdir -p _output
+	@mkdir -p $(OUTPUT_DIR)
 ifneq ("$(HAS_BENCH_STORAGE)","")
-	@mv _output/bench_storage.txt _output/bench_storage.old.txt
+	@mv $(OUTPUT_DIR)/bench_storage.txt $(OUTPUT_DIR)/bench_storage.old.txt
 endif
-	@go test ./pkg/storage/ -bench=. -run=^$ -benchmem -count 5 -timeout 1h | tee _output/bench_storage.txt
+	@go test ./pkg/storage/ -bench=. -run=^$ -benchmem -count 5 -timeout 1h | tee $(OUTPUT_DIR)/bench_storage.txt
 ifeq ("$(HAS_BENCH_STORAGE)","")
-	@cp _output/bench_storage.txt _output/bench_storage.old.txt
+	@cp $(OUTPUT_DIR)/bench_storage.txt $(OUTPUT_DIR)/bench_storage.old.txt
 endif
 	@echo
 	@echo 'Comparing versus previous run. When optimizing copy everything below this line and include in PR description.'
 	@echo
-	@benchstat _output/bench_storage.old.txt _output/bench_storage.txt
+	@benchstat $(OUTPUT_DIR)/bench_storage.old.txt $(OUTPUT_DIR)/bench_storage.txt
 
-HAS_BENCHSTAT:=$(shell which benchstat)
+HAS_BENCHSTAT:=$(shell command -v benchstat)
 .PHONY: benchstat
 benchstat:
 ifndef HAS_BENCHSTAT
-	@go install -mod=readonly golang.org/x/perf/cmd/benchstat
+	@go install -mod=readonly -modfile=scripts/go.mod golang.org/x/perf/cmd/benchstat
 endif
 
 # Image tests
@@ -141,21 +176,22 @@ test-image-all:
 # -----------
 
 .PHONY: test-e2e
-test-e2e: test-e2e-1.24
+test-e2e: test-e2e-1.29
 
 .PHONY: test-e2e-all
-test-e2e-all: test-e2e-1.24 test-e2e-1.23 test-e2e-1.22
+test-e2e-all: test-e2e-1.29 test-e2e-1.28 test-e2e-1.27
 
-.PHONY: test-e2e-1.24
-test-e2e-1.24:
-	NODE_IMAGE=kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e ./test/test-e2e.sh
+.PHONY: test-e2e-1.29
+test-e2e-1.29:
+	NODE_IMAGE=kindest/node:v1.29.0@sha256:eaa1450915475849a73a9227b8f201df25e55e268e5d619312131292e324d570 KIND_CONFIG="${PWD}/test/kind-config-with-sidecar-containers.yaml" ./test/test-e2e.sh
 
-.PHONY: test-e2e-1.23
-test-e2e-1.23:
-	NODE_IMAGE=kindest/node:v1.23.0@sha256:49824ab1727c04e56a21a5d8372a402fcd32ea51ac96a2706a12af38934f81ac ./test/test-e2e.sh
-.PHONY: test-e2e-1.22
-test-e2e-1.22:
-	NODE_IMAGE=kindest/node:v1.22.0@sha256:b8bda84bb3a190e6e028b1760d277454a72267a5454b57db34437c34a588d047 ./test/test-e2e.sh
+.PHONY: test-e2e-1.28
+test-e2e-1.28:
+	NODE_IMAGE=kindest/node:v1.28.0@sha256:b7a4cad12c197af3ba43202d3efe03246b3f0793f162afb40a33c923952d5b31 KIND_CONFIG="${PWD}/test/kind-config-with-sidecar-containers.yaml" ./test/test-e2e.sh
+
+.PHONY: test-e2e-1.27
+test-e2e-1.27:
+	NODE_IMAGE=kindest/node:v1.27.3@sha256:3966ac761ae0136263ffdb6cfd4db23ef8a83cba8a463690e98317add2c9ba72 ./test/test-e2e.sh
 
 
 .PHONY: test-e2e-ha
@@ -178,7 +214,7 @@ test-e2e-helm-all:
 # ---------------
 
 .PHONY: verify
-verify: verify-licenses verify-lint verify-toc verify-deps verify-generated verify-structured-logging
+verify: verify-licenses verify-lint verify-toc verify-deps verify-scripts-deps verify-generated verify-structured-logging
 
 .PHONY: update
 update: update-licenses update-lint update-toc update-deps update-generated
@@ -186,7 +222,7 @@ update: update-licenses update-lint update-toc update-deps update-generated
 # License
 # -------
 
-HAS_ADDLICENSE:=$(shell which addlicense)
+HAS_ADDLICENSE:=$(shell command -v addlicense)
 .PHONY: verify-licenses
 verify-licenses:addlicense
 	find -type f -name "*.go" ! -path "*/vendor/*" | xargs $(GOPATH)/bin/addlicense -check || (echo 'Run "make update"' && exit 1)
@@ -198,7 +234,7 @@ update-licenses: addlicense
 .PHONY: addlicense
 addlicense:
 ifndef HAS_ADDLICENSE
-	go install -mod=readonly github.com/google/addlicense
+	go install -mod=readonly -modfile=scripts/go.mod github.com/google/addlicense
 endif
 
 # Lint
@@ -206,17 +242,17 @@ endif
 
 .PHONY: verify-lint
 verify-lint: golangci
-	golangci-lint run --timeout 10m --modules-download-mode=readonly || (echo 'Run "make update"' && exit 1)
+	$(GOPATH)/bin/golangci-lint run --timeout 10m || (echo 'Run "make update"' && exit 1)
 
 .PHONY: update-lint
 update-lint: golangci
-	golangci-lint run --fix --modules-download-mode=readonly
+	$(GOPATH)/bin/golangci-lint run --fix
 
-HAS_GOLANGCI:=$(shell which golangci-lint)
+HAS_GOLANGCI_VERSION:=$(shell $(GOPATH)/bin/golangci-lint version --format=short > /dev/null 2>&1)
 .PHONY: golangci
 golangci:
-ifndef HAS_GOLANGCI
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.51.2
+ifneq ($(HAS_GOLANGCI_VERSION), $(GOLANGCI_VERSION))
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v$(GOLANGCI_VERSION)
 endif
 
 # Table of Contents
@@ -232,11 +268,11 @@ verify-toc: mdtoc $(docs_with_toc)
 update-toc: mdtoc $(docs_with_toc)
 	$(GOPATH)/bin/mdtoc --inplace $(docs_with_toc)
 
-HAS_MDTOC:=$(shell which mdtoc)
+HAS_MDTOC:=$(shell command -v mdtoc)
 .PHONY: mdtoc
 mdtoc:
 ifndef HAS_MDTOC
-	go install -mod=readonly sigs.k8s.io/mdtoc
+	go install -mod=readonly -modfile=scripts/go.mod sigs.k8s.io/mdtoc
 endif
 
 # Structured Logging
@@ -246,11 +282,11 @@ endif
 verify-structured-logging: logcheck
 	$(GOPATH)/bin/logcheck ./... || (echo 'Fix structured logging' && exit 1)
 
-HAS_LOGCHECK:=$(shell which logcheck)
+HAS_LOGCHECK:=$(shell command -v logcheck)
 .PHONY: logcheck
 logcheck:
 ifndef HAS_LOGCHECK
-	go install -mod=readonly sigs.k8s.io/logtools/logcheck
+	go install -mod=readonly -modfile=scripts/go.mod sigs.k8s.io/logtools/logcheck
 endif
 
 # Dependencies
@@ -259,12 +295,17 @@ endif
 .PHONY: update-deps
 update-deps:
 	go mod tidy
+	cd scripts && go mod tidy
 
 .PHONY: verify-deps
 verify-deps:
 	go mod verify
 	go mod tidy
 	@git diff --exit-code -- go.mod go.sum
+
+.PHONY: verify-scripts-deps
+verify-scripts-deps:
+	make -C scripts -f ../Makefile verify-deps
 
 # Generated
 # ---------
@@ -278,8 +319,8 @@ verify-generated: update-generated
 .PHONY: update-generated
 update-generated:
 	# pkg/api/generated/openapi/zz_generated.openapi.go
-	go install -mod=readonly k8s.io/kube-openapi/cmd/openapi-gen
-	$(GOPATH)/bin/openapi-gen --logtostderr -i k8s.io/metrics/pkg/apis/metrics/v1beta1,k8s.io/apimachinery/pkg/apis/meta/v1,k8s.io/apimachinery/pkg/api/resource,k8s.io/apimachinery/pkg/version -p pkg/api/generated/openapi/ -O zz_generated.openapi -o $(REPO_DIR) -h $(REPO_DIR)/scripts/boilerplate.go.txt -r /dev/null
+	go install -mod=readonly -modfile=scripts/go.mod k8s.io/kube-openapi/cmd/openapi-gen
+	$(GOPATH)/bin/openapi-gen -i k8s.io/metrics/pkg/apis/metrics/v1beta1,k8s.io/apimachinery/pkg/apis/meta/v1,k8s.io/apimachinery/pkg/api/resource,k8s.io/apimachinery/pkg/version -p pkg/api/generated/openapi/ -O zz_generated.openapi -o $(REPO_DIR) -h $(REPO_DIR)/scripts/boilerplate.go.txt -r /dev/null
 
 # Deprecated
 # ----------
@@ -293,4 +334,4 @@ test-version: test-image-all
 
 .PHONY: clean
 clean:
-	rm -rf _output
+	rm -rf $(OUTPUT_DIR)

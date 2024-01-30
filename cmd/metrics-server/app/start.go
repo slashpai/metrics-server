@@ -22,17 +22,16 @@ import (
 	"github.com/spf13/cobra"
 
 	"k8s.io/client-go/pkg/version"
-
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 	"k8s.io/component-base/term"
+
 	"sigs.k8s.io/metrics-server/cmd/metrics-server/app/options"
 )
 
 // NewMetricsServerCommand provides a CLI handler for the metrics server entrypoint
 func NewMetricsServerCommand(stopCh <-chan struct{}) *cobra.Command {
 	opts := options.NewOptions()
-
 	cmd := &cobra.Command{
 		Short: "Launch metrics-server",
 		Long:  "Launch metrics-server",

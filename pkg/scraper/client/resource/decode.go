@@ -20,10 +20,12 @@ import (
 	"io"
 	"time"
 
-	"github.com/prometheus/prometheus/pkg/textparse"
-	"github.com/prometheus/prometheus/pkg/timestamp"
+	"github.com/prometheus/prometheus/model/textparse"
+	"github.com/prometheus/prometheus/model/timestamp"
+
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
+
 	"sigs.k8s.io/metrics-server/pkg/storage"
 )
 
@@ -42,9 +44,11 @@ func decodeBatch(b []byte, defaultTime time.Time, nodeName string) (*storage.Met
 	}
 	node := &storage.MetricsPoint{}
 	pods := make(map[apitypes.NamespacedName]storage.PodMetricsPoint)
-	parser := textparse.New(b, "")
+	parser, err := textparse.New(b, "", false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Prometheus parser: %w", err)
+	}
 	var (
-		err              error
 		defaultTimestamp = timestamp.FromTime(defaultTime)
 		et               textparse.Entry
 	)

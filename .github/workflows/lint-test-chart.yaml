@@ -6,6 +6,9 @@ on:
       - .github/workflows/lint-test-chart.yaml
       - "charts/metrics-server/**"
 
+permissions:
+  contents: read
+
 jobs:
   lint-test:
     name: Lint & Test
@@ -16,17 +19,17 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 #v4.1.1
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 #v4.1.7
         with:
           fetch-depth: 0
 
       - name: Set-up Python
-        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5.1.1
         with:
           python-version: "3.x"
 
       - name: Set-up Helm
-        uses: azure/setup-helm@5119fcb9089d432beecbf79bb2c7915207344b78 # v3.5
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
@@ -48,20 +51,20 @@ jobs:
       - name: Get chart version
         id: chart_version
         if: steps.changes.outputs.changed == 'true'
-        uses: mikefarah/yq@dd648994340a5d03225d97abf19c9bf1086c3f07 # v4.40.5
+        uses: mikefarah/yq@bbdd97482f2d439126582a59689eb1c855944955 # v4.44.3
         with:
           cmd: yq eval '.version' './charts/metrics-server/Chart.yaml'
 
       - name: Get changelog entry
         if: steps.changes.outputs.changed == 'true'
-        uses: mindsers/changelog-reader-action@b97ce03a10d9bdbb07beb491c76a5a01d78cd3ef # v2.2.2
+        uses: mindsers/changelog-reader-action@32aa5b4c155d76c94e4ec883a223c947b2f02656 # v2.2.3
         with:
           path: charts/metrics-server/CHANGELOG.md
-          version: ${{ steps.chart_version.outputs.version }}
+          version: ${{ steps.chart_version.outputs.result }}
 
       - name: Set-up Artifact Hub CLI
         if: steps.changes.outputs.changed == 'true'
-        uses: action-stars/install-tool-from-github-release@b21a01813213cbbf482eeceda07ad03b41b754d1 # v0.2.1
+        uses: action-stars/install-tool-from-github-release@ece2623611b240002e0dd73a0d685505733122f6 # v0.2.4
         with:
           github_token: ${{ github.token }}
           owner: artifacthub
@@ -80,7 +83,7 @@ jobs:
 
       - name: Create Kind cluster
         if: steps.changes.outputs.changed == 'true'
-        uses: helm/kind-action@dda0770415bac9fc20092cacbc54aa298604d140 # v1.8.0
+        uses: helm/kind-action@0025e74a8c7512023d06dc019c617aa3cf561fde # v1.10.0
         with:
           wait: 120s
 

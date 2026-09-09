@@ -101,6 +101,7 @@ type scraper struct {
 	kubeletClient client.KubeletMetricsGetter
 	scrapeTimeout time.Duration
 	labelSelector labels.Selector
+	knownNodes    map[string]struct{}
 }
 
 var _ Scraper = (*scraper)(nil)
@@ -117,6 +118,8 @@ func (c *scraper) Scrape(baseCtx context.Context) *storage.MetricsBatch {
 	if err != nil {
 		// report the error and continue on in case of partial results
 		klog.ErrorS(err, "Failed to list nodes")
+	} else {
+		c.pruneStaleNodeMetrics(nodes)
 	}
 	klog.V(1).InfoS("Scraping metrics from nodes", "nodes", klog.KObjSlice(nodes), "nodeCount", len(nodes), "nodeSelector", c.labelSelector)
 
@@ -181,6 +184,23 @@ func (c *scraper) Scrape(baseCtx context.Context) *storage.MetricsBatch {
 
 	klog.V(1).InfoS("Scrape finished", "duration", myClock.Since(startTime), "nodeCount", len(res.Nodes), "podCount", len(res.Pods))
 	return res
+}
+
+func (c *scraper) pruneStaleNodeMetrics(nodes []*corev1.Node) {
+	current := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		current[node.Name] = struct{}{}
+	}
+
+	for nodeName := range c.knownNodes {
+		if _, ok := current[nodeName]; ok {
+			continue
+		}
+		requestDuration.Delete(map[string]string{"node": nodeName})
+		lastRequestTime.DeleteLabelValues(nodeName)
+	}
+
+	c.knownNodes = current
 }
 
 func (c *scraper) collectNode(ctx context.Context, node *corev1.Node) (*storage.MetricsBatch, error) {

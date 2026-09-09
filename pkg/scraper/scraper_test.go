@@ -226,6 +226,78 @@ var _ = Describe("Scraper", func() {
 		By("running the scraper")
 		scraper.Scrape(context.Background())
 	})
+
+	It("should remove per-node metrics when nodes leave the cluster", func() {
+		requestDuration.Create(nil)
+		lastRequestTime.Create(nil)
+		requestDuration.Reset()
+		lastRequestTime.Reset()
+
+		myClock = mockClock{
+			now:   time.Time{},
+			later: time.Time{}.Add(time.Second),
+		}
+		nodes := fakeNodeLister{nodes: []*corev1.Node{node1}}
+		scraper := NewScraper(&nodes, &client, 3*time.Second, labelRequirement)
+
+		By("scraping a single node")
+		scraper.Scrape(context.Background())
+
+		err := testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		metrics_server_kubelet_last_request_time_seconds{node="node1"} -6.21355968e+10
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("removing the node from the cluster")
+		nodes.nodes = []*corev1.Node{}
+
+		By("scraping again")
+		scraper.Scrape(context.Background())
+
+		err = testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		err = testutil.CollectAndCompare(requestDuration, strings.NewReader(`
+		# HELP metrics_server_kubelet_request_duration_seconds [ALPHA] Duration of requests to Kubelet API in seconds
+		# TYPE metrics_server_kubelet_request_duration_seconds histogram
+		`), "metrics_server_kubelet_request_duration_seconds")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("should not remove per-node metrics when listing nodes fails", func() {
+		requestDuration.Create(nil)
+		lastRequestTime.Create(nil)
+		requestDuration.Reset()
+		lastRequestTime.Reset()
+
+		myClock = mockClock{
+			now:   time.Time{},
+			later: time.Time{}.Add(time.Second),
+		}
+		nodes := fakeNodeLister{nodes: []*corev1.Node{node1}}
+		scraper := NewScraper(&nodes, &client, 3*time.Second, labelRequirement)
+
+		By("scraping a single node")
+		scraper.Scrape(context.Background())
+
+		By("failing the next node list")
+		nodes.listErr = fmt.Errorf("something went wrong, expectedly")
+
+		By("scraping again")
+		scraper.Scrape(context.Background())
+
+		err := testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		metrics_server_kubelet_last_request_time_seconds{node="node1"} -6.21355968e+10
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+	})
 })
 
 func metricPoint(cpu, memory uint64, time time.Time) storage.MetricsPoint {
